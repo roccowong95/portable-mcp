@@ -3,7 +3,8 @@
 
 Requires Python 3.9+, an existing Node and npm's own semver. The default reuses a
 valid compatible installation without network access. --update explicitly selects
-the newest compatible stable release; --version selects a validated exact release.
+the newest compatible stable release. Node/npm come from the existing PATH;
+registry and installation layout are fixed, not caller-selectable.
 """
 import argparse
 from contextlib import contextmanager
@@ -29,6 +30,7 @@ PACKAGE_REL = Path("node_modules/mcporter")
 CLI_REL = "node_modules/mcporter/dist/cli.js"
 HELPER = SCRIPTS / "mcporter_versions.cjs"
 MARKER_NAME = "skill-install.json"
+REGISTRY = "https://registry.npmjs.org/"
 MAX_METADATA_BYTES = 64 * 1024 * 1024
 
 
@@ -101,31 +103,29 @@ def run_json(command, payload, env):
 
 
 def safe_env(node):
-    # Do not inherit global installs, force/ignore-engines, alternate lockfile
-    # policy, user configs, lifecycle hooks or Node preload/search overrides.
+    # Deployment is fixed. Do not inherit npm config/auth/engine policy,
+    # lifecycle hooks, Node preload/search options, or legacy skill overrides.
+    # Keep OS/proxy environment and PATH: existing tools are discovered, not
+    # installed or selected by a separate deployment override.
+    blocked_prefixes = ("NPM_", "NODE_", "COREPACK_", "MCPORTER_", "PMCP_",
+                        "MCPC_", "PORTABLE_MCP_", "XDG_")
     env = {key: value for key, value in os.environ.items()
-           if not key.lower().startswith(("npm_config_", "npm_package_", "npm_lifecycle_"))
-           and key.upper() not in ("NODE_OPTIONS", "NODE_PATH")}
+           if not key.upper().startswith(blocked_prefixes)}
     env["PATH"] = str(Path(node).parent) + os.pathsep + env.get("PATH", "")
     return env
 
 
-def resolve_node(requested):
-    found = shutil.which(requested or "node")
+def resolve_node():
+    found = shutil.which("node")
     if not found:
-        raise RuntimeError("Node not found; select an existing runtime with --node. Node will not be installed or upgraded")
+        raise RuntimeError("Node not found on PATH. This installer never installs or upgrades Node")
     node = str(Path(found).resolve(strict=True))
     result = subprocess.run([node, "--version"], capture_output=True, text=True,
                             check=True, shell=False, timeout=30, env=safe_env(node))
     return node, result.stdout.strip()
 
 
-def resolve_npm_cli(node, requested, previous):
-    if requested:
-        cli = Path(requested).expanduser().resolve(strict=True)
-        if not cli.is_file() or cli.name != "npm-cli.js":
-            raise RuntimeError("--npm-cli must identify an existing npm-cli.js file")
-        return str(cli)
+def resolve_npm_cli(node):
     candidates = []
     for name in ("npm", "npm.cmd"):
         found = shutil.which(name)
@@ -139,12 +139,10 @@ def resolve_npm_cli(node, requested, previous):
     candidates.extend([node_dir / "node_modules/npm/bin/npm-cli.js",
                        node_dir.parent / "lib/node_modules/npm/bin/npm-cli.js",
                        node_dir.parent / "node_modules/npm/bin/npm-cli.js"])
-    if previous and isinstance(previous.get("npmCli"), str):
-        candidates.append(Path(previous["npmCli"]))
     for candidate in candidates:
         if candidate.name == "npm-cli.js" and candidate.is_file():
             return str(candidate.resolve(strict=True))
-    raise RuntimeError("Cannot locate npm-cli.js; specify --npm-cli /absolute/path/to/npm-cli.js (no shell fallback)")
+    raise RuntimeError("Cannot locate an existing npm-cli.js from PATH or beside Node; no shell fallback or runtime installation is allowed")
 
 
 def read_object(path):
@@ -194,23 +192,6 @@ def validate_registry(raw):
     return raw.rstrip("/") + "/"
 
 
-def configured_registry(explicit, npm_cli, node):
-    if explicit:
-        return validate_registry(explicit)
-    # Read only: honor operator-configured registry before isolating installation
-    # configs. Never copy auth/config contents into the skill or its marker.
-    env = os.environ.copy()
-    env.pop("NODE_OPTIONS", None)
-    env.pop("NODE_PATH", None)
-    result = subprocess.run([node, npm_cli, "config", "get", "registry",
-                             "--logs-max=0", "--update-notifier=false"],
-                            cwd=str(SCRIPTS), env=env, capture_output=True, text=True,
-                            shell=False, timeout=30)
-    if result.returncode:
-        raise RuntimeError("Cannot read configured npm registry; use --registry https://registry.npmjs.org/")
-    return validate_registry(result.stdout)
-
-
 class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # urllib otherwise permits an HTTPS -> HTTP metadata downgrade.
@@ -218,15 +199,15 @@ class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch_versions(registry):
-    request = urllib.request.Request(registry + "mcporter", headers={
+def fetch_versions():
+    request = urllib.request.Request(REGISTRY + "mcporter", headers={
         "Accept": "application/json",  # Full packument, including deprecations/engines.
         "User-Agent": "portable-mcp-mcporter-installer/1"})
     try:
         with urllib.request.build_opener(HTTPSRedirectHandler()).open(request, timeout=60) as response:
             body = response.read(MAX_METADATA_BYTES + 1)
     except (urllib.error.URLError, OSError):
-        raise RuntimeError("Cannot fetch HTTPS mcporter metadata from configured registry (no auth is copied); check connectivity/registry") from None
+        raise RuntimeError("Cannot fetch HTTPS mcporter metadata from the official npm registry; check connectivity") from None
     if len(body) > MAX_METADATA_BYTES:
         raise RuntimeError("Registry metadata exceeds the 64 MiB safety limit")
     metadata = json.loads(body)
@@ -249,7 +230,7 @@ def verify_package(directory, expected, node_version, helper_command, env):
     return result
 
 
-def install_staged(version, selection, registry, node, node_version, npm_cli, helper_command, env):
+def install_staged(version, selection, node, node_version, npm_cli, helper_command, env):
     os.umask(0o077)
     RUNTIME_PARENT.mkdir(mode=0o700, exist_ok=True)
     if RUNTIME_PARENT.is_symlink():
@@ -282,7 +263,7 @@ def install_staged(version, selection, registry, node, node_version, npm_cli, he
         subprocess.run([node, npm_cli, "install", "--prefix", str(stage),
                         "--global=false", "--workspaces=false", "--save-exact",
                         "--package-lock=true", "--ignore-scripts", "--engine-strict",
-                        "--no-audit", "--no-fund", "--omit=dev", "--registry", registry,
+                        "--no-audit", "--no-fund", "--omit=dev", "--registry", REGISTRY,
                         "mcporter@" + version], cwd=str(stage), env=install_env,
                        check=True, shell=False)
         verified = verify_package(stage, version, node_version, helper_command, env)
@@ -296,7 +277,7 @@ def install_staged(version, selection, registry, node, node_version, npm_cli, he
         marker = {
             "schemaVersion": 1, "package": "mcporter", "version": version,
             "nodeVersion": node_version, "nodeExecutable": node, "npmCli": npm_cli,
-            "npmVersion": npm_version, "registry": registry,
+            "npmVersion": npm_version, "registry": REGISTRY,
             "engineRange": verified["engineRange"], "cli": CLI_REL,
             "installedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "installScripts": False,
@@ -335,10 +316,6 @@ def promote(stage, previous):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--node", help="Existing Node executable; defaults to PATH (never upgraded)")
-    parser.add_argument("--npm-cli", help="Existing npm-cli.js; executed through the selected Node, never a shell")
-    parser.add_argument("--registry", help="HTTPS npm registry; defaults to npm config get registry")
-    parser.add_argument("--version", help="Exact stable mcporter version >=0.9.0, checked against actual Node")
     parser.add_argument("--update", action="store_true", help="Explicitly select and stage a compatible update")
     parser.add_argument("--check", action="store_true", help="Select/report without installing or changing files")
     args = parser.parse_args()
@@ -352,16 +329,14 @@ def main():
 
 def main_locked(args):
     previous = previous_install()
-    node, node_version = resolve_node(args.node)
-    npm_cli = resolve_npm_cli(node, args.npm_cli, previous)
+    node, node_version = resolve_node()
+    npm_cli = resolve_npm_cli(node)
     env = safe_env(node)
     helper_command = [node, str(HELPER), "--npm-cli", npm_cli]
     if previous and not args.update:
         if previous.get("nodeVersion") != node_version:
             raise RuntimeError("Node version differs from installed runtime marker; use --update to stage strict transitive-engine revalidation (Node itself is never changed)")
         verified = verify_package(RUNTIME, previous["version"], node_version, helper_command, env)
-        if args.version is not None and args.version != verified["version"]:
-            raise RuntimeError("A different runtime is already installed; use --update --version EXACT to replace explicitly")
         print(json.dumps({"status": "already-installed", "version": verified["version"],
                           "nodeVersion": node_version, "engineRange": verified["engineRange"],
                           "cli": str(RUNTIME / CLI_REL), "network": False}))
@@ -372,17 +347,14 @@ def main_locked(args):
         "nodeVersion": node_version,
         "package": {"name": "mcporter", "version": "0.9.0", "engines": {"node": "*"}},
     }, env)
-    registry = configured_registry(args.registry, npm_cli, node)
-    payload = {"nodeVersion": node_version, "versions": fetch_versions(registry)}
-    if args.version is not None:
-        payload["requestedVersion"] = args.version
+    payload = {"nodeVersion": node_version, "versions": fetch_versions()}
     selected = run_json(helper_command + ["select"], payload, env)
     print(json.dumps({"status": "selected", "version": selected["version"],
                       "nodeVersion": node_version, "engineRange": selected["engineRange"],
-                      "registry": registry, "checkOnly": args.check}), flush=True)
+                      "registry": REGISTRY, "checkOnly": args.check}), flush=True)
     if args.check:
         return 0
-    stage = install_staged(selected["version"], selected, registry, node, node_version,
+    stage = install_staged(selected["version"], selected, node, node_version,
                            npm_cli, helper_command, env)
     promote(stage, previous)
     print("Installed private mcporter runtime; exact package-lock retained. No MCP connected and Node unchanged.")

@@ -1,67 +1,59 @@
-# OAuth 与私有凭据
+# 显式 OAuth 与私有凭据
 
-## 1. 普通调用没有隐式登录
+## 1. 普通业务调用不登录
 
-区分服务类型：匿名 HTTP/stdio 不需要 OAuth；静态 API Key/Bearer 通过受控环境和配置 headers 提供；OAuth 服务明确配置 `auth: "oauth"`。先确认服务 URL、OS 身份、目标账号和最小权限，不因 401/连接失败自动登录或扩大 scope。
+匿名 HTTP/stdio 不需要 OAuth；静态 API Key/Bearer 通过受控业务环境与 headers 提供；OAuth 服务明确 `auth: "oauth"`。先确认服务、OS 账号、目标业务账号和最小权限，不因 401 自动登录、改账号或扩大 scope。
 
-`tools` / `schema` / `call` **禁止自动启动 OAuth/browser**，也不自动安装运行时或服务器。服务需要授权时停止业务请求，取得用户许可后单独使用固定入口 `auth SERVER`。不调用原生 CLI 绕过门槛，不自己抽取/维护第二套 AT/RT。
+`tools` / `schema` / `call` **不启动 OAuth 或浏览器，不自动安装任何包**。需要授权就暂停业务请求，确认用户许可，再单独 `auth SERVER`；不调用原生 CLI 绕过，不抽取/维护第二套 AT/RT。
 
-## 2. 显式 auth 与版本门槛
+## 2. 固定无浏览器授权与版本门槛
 
-`pmcp` 是[固定入口](installation.md)简写；下面仅展示接口，不是立即执行的授权指令：
-
-```sh
-# 默认操作 timeout 为 60000ms；登录需更长等待可显式设置（子命令前）
-pmcp --timeout 300000 auth oauth-service
-# 需要清理/重建认证状态时先确认，不把 reset 当常规重试
-pmcp --timeout 300000 auth oauth-service --reset
-# 仅已核实的 mcporter >=0.15.0 路径开放；旧版失败关闭
-pmcp --timeout 300000 auth oauth-service --no-browser
-```
-
-auth 会访问网络、可能打开浏览器、写入私有 vault；允许刷新或重新授权。`--reset` 可能丢失本地认证状态，不自动执行。`--no-browser` 是禁止自动开浏览器，不等于免交互授权、离线认证或自动回传 code；0.9 的 CLI 不能凭新版文档假设兼容，即使旧文档出现其他 browser 参数，本入口仍拒绝 <0.15 的该选项。
-
-### 0.9 交互授权的已知风险门槛
-
-`<0.10.0` 的原生 OAuth 回调存在已核实缺陷：state 比较要求 expectedState 和 receivedState 同时存在，因此缺失 receivedState 可绕过该比较。本入口**没有补丁修复该漏洞**，私有目录/OS 锁也不能修复它。该版本 `auth`（包括 `--reset`）默认拒绝；只有用户在得知风险后单独明确接受，才加 `--allow-legacy-oauth`：
+`pmcp` 是[固定入口](installation.md)简写，以下仅展示接口，不是立即执行的授权指令：
 
 ```sh
-# 仅在用户另行接受上述旧回调风险后；不是默认/自动步骤
-pmcp --timeout 300000 auth oauth-service --allow-legacy-oauth
+pmcp auth oauth-service
+# 清理/重建认证状态须另行确认，不作为普通重试
+pmcp auth oauth-service --reset
 ```
 
-该门槛不影响匿名/header 或已有缓存 token 的普通工具操作。可在不升级既有 Node 的前提下评估兼容的现代版；没有安全可接受的授权路径就停止，不静默跳过门槛、自动修补或升级 Node。
+**auth 固定不自动打开浏览器，仅支持已核实 mcporter >=0.15.0。** 用户没有浏览器模式、超时、旧版风险接受或其他认证开关；<0.15 的 auth（包括 reset）失败关闭。旧版本即使存在不同原生参数，也不允许绕过入口尝试。不升级系统 Node 迁就授权；现有 Node 无兼容现代授权路径时停止并说明限制。
 
-不要编造本入口不支持的 `--code`、`vault set`、config login、token import 或新认证扩展。需要 scope、固定 client/redirect 配置时，先核对实际安装版本的官方文档和服务要求；0.15 的新字段不向 0.9 保证兼容。
+auth 会联网并写入私有 vault，可刷新或重新授权；不自动开浏览器不等于免交互、离线授权或自动回传 code。内部 auth/logout 父进程上限为 605 秒（600 秒预算加 5 秒清理窗口），不向原生 CLI 传入该预算，后端可能更早结束，不保证授权等待恰好 600 秒；profile 锁等待 30 秒，不可通过参数或环境覆盖。reset 可能丢失本地状态，必须单独确认。
 
-## 3. 普通请求中的 token 使用
+已核实的旧 0.9 回调 state 比较要求 expectedState 与 receivedState 同时存在，缺失 receivedState 可绕过比较。入口不补丁修复该缺陷，目录权限/锁也不能修复；固定现代门槛不提供接受风险绕过。0.9 仅是兼容性示例，不是要求安装的目标。
 
-- **0.9–0.11 旧 API 路径**：只将已有缓存 access token 注入连接，不启动 OAuth、不隐式 refresh。token 缺失/过期后可能收到未授权，必须显式 `auth SERVER` 由该版本的原生授权流程刷新或重新授权。
-- **>=0.12 现代 API 路径**：使用已核实的 `disableOAuth` 等运行时开关，禁止发现/调用自动发起 OAuth。缓存 token 和刷新细节随版本/SDK 变化；本 skill 不承诺普通调用能够自动刷新，也不把现代认证扩展当成旧版能力。
-- 静态 headers 不会因为禁用 OAuth 自动清除；确认实际账号/密钥来源，不混合不明 token 与 profile。token 有效不等于有当前业务权限。
+不要编造 code 回传、vault set、config login、token import 或新认证扩展。scope、client/redirect 字段先核对实际版本与服务合同，新文档不向旧版保证兼容。
 
-auth 成功、发现成功、新进程持久性、真实过期刷新是不同验收项，不能互相代替。refresh token 失效/撤销可能需要重新授权；token 更新也不等于服务端实施了轮换。
+## 3. 已有 token 与普通操作
 
-## 4. 无桌面/远程 callback
+- **0.9–0.11 旧 API 路径**：普通操作只注入已有合法缓存 access token，不启动 OAuth、不隐式 refresh。匿名/header/已有合法 token 的普通 tools/schema/call 仍可；token 缺失/过期后停止。旧版 auth 被固定门槛拒绝，没有风险接受开关。
+- **>=0.12 现代 API 路径**：使用已核实 disableOAuth 等开关，禁止发现/调用自动发起 OAuth。缓存/刷新细节随版本和 SDK 变化，不承诺普通操作自动刷新；需要显式 auth 时仍要求 >=0.15。
+- 静态 headers 不会因禁用 OAuth 自动清除；确认账号与密钥来源，不混合不明 token。token 有效不代表当前业务已授权。
 
-浏览器在用户电脑而客户端在远端时，浏览器中的 localhost 指用户电脑。先确认版本支持的 redirect URI 和实际 loopback 端口；管理员可在许可下配置只绑定本机的 SSH 转发，不公开 callback 端口，结束后关闭。
+auth 成功、发现成功、新进程持久性、真实过期刷新是独立验收项；refresh token 撤销/失效可能需重新授权，token 更新不证明服务端轮换。
 
-若所选版本提供私有终端/stdin 回调流程，保持原 auth 进程存活，按该版本流程操作，不重放旧 code、不把 callback URL 交给模型。**含 code/state、PKCE verifier、access/refresh token 的完整 URL、日志或 JSON 不进入聊天、argv、skill 或示例。** 无浏览器授权 URL也是敏感运维输出，仅通过受控通道交给用户；不保证它适合公开。
+## 4. 无桌面与远程 callback
 
-本版不是通用 callback 校验器；不能把旧 mcpc 的安全结论直接套给 mcporter，也不能因为更换包名就宣称 OAuth 已安全验收。真实授权前核对所选版本的回调、账号、redirect 和 scope 合同，见[官方来源](sources.md)。
+不自动打开浏览器时，授权 URL 仅通过私有终端/受控通道交给用户，保持原 auth 进程存活并遵循实际版本的回调流程。若浏览器在用户电脑而客户端在远端，localhost 指用户电脑；先核对 redirect URI 和实际 loopback 端口，管理员可经许可设置仅绑定本机的 SSH 转发，结束后关闭，不公开 callback 端口。
 
-## 5. vault、隔离与锁
+不承诺自动 code 回传，不重放旧 code，不把 callback URL 交给模型。**含 code/state、PKCE verifier、access/refresh token 的 URL、日志或 JSON 不进入聊天、argv、skill 或示例。** 授权 URL 本身也可能敏感，不适合公开。
 
-固定入口始终设置私有 HOME/USERPROFILE、XDG config/data/cache/state 和 daemon 环境，配置根 key 仅 mcpServers/imports，保持 `imports: []`，每个服务显式 lifecycle ephemeral；auth 也先校验，不读取默认其他客户端、不改写配置。无 `tokenCacheDir`；默认 vault：
+本入口不是通用 callback 校验器，不能把旧 mcpc 的安全结论套给 mcporter，也不因包名变化宣称 OAuth 已验收。真实授权前核对版本、回调、账号、redirect 和 scope，见[官方来源](sources.md)。
 
-- 旧版 0.9 等：`<private-state>/home/.mcporter/credentials.json`。
-- 现代版 0.15 已核实：`<private-state>/data/mcporter/credentials.json`。
+## 5. 固定状态、vault 与锁
 
-旧 0.9 vault 写入非原子，崩溃/中断可能留下损坏 JSON；入口遇到损坏失败关闭，不自动重置、修复或伪造凭据。锁只处理合作进程串行化，不保证写入抗崩溃。保留受保护副本，恢复/删除/重新授权由用户决定。
+状态根固定在 OS 账号真实 home 的 `.portable-mcp`；POSIX 取 pwd 用户目录，Windows 取系统 profile，不采用环境 HOME/USERPROFILE，不迁移旧自选目录。内部再设置私有 HOME/USERPROFILE、四个 XDG 目录和 daemon 路径。配置固定 `config/mcporter.json`，根 key 仅 mcpServers/imports，imports 为 []，每个服务显式 ephemeral；auth 也先校验，不读其他客户端、不改写配置，无 tokenCacheDir。
 
-vault **明文、不加密**；放在 skill 外并保护权限，不提交、打包、打印或传模型。POSIX 私有目录/文件；Windows 需预先受保护 ACL，入口只检查，不承诺完整生产验收。同权限/root、恶意 stdio 子进程或泄露备份仍是风险。
+用于解释版本差异的内部 vault 位置，不是可选择路径：
 
-同一私有状态目录的全部入口命令用 OS 锁串行执行，覆盖旧 vault 读改写和显式授权。不要直接跑 native CLI，也不要让其他客户端并发共享这些凭据；此锁只约束合作入口，不是跨客户端万能锁。不为绕过 busy 错误换入口/复制 token。
+- 旧 0.9 等：`<真实home>/.portable-mcp/home/.mcporter/credentials.json`。
+- 已核实现代 0.15：`<真实home>/.portable-mcp/data/mcporter/credentials.json`。
+
+旧 vault 非原子写入，崩溃/中断可损坏 JSON；入口失败关闭，不自动重置、修复或伪造凭据。保留受保护副本，恢复/删除由用户决定；重新授权仍受现代门槛约束。
+
+vault **明文不加密**，不提交、打包、打印或传模型。POSIX 私有权限；Windows 管理员预建受保护 ACL，入口只检查，不宣称完整生产验收。同权限/root、恶意 stdio 或泄露备份仍有风险。
+
+固定 profile 的全部入口命令由 OS 锁串行化，不直接 native CLI，不让其他客户端并发复用；锁仅约束合作入口，不为绕过 busy 换目录/账号或复制 token。
 
 ## 6. logout、迁移与撤权
 
@@ -69,6 +61,6 @@ vault **明文、不加密**；放在 skill 外并保护权限，不提交、打
 pmcp logout oauth-service
 ```
 
-logout 是经确认的本地清理，具体清理范围依 mcporter 版本；不等于撤销远端 grant，也不保证已运行任务取消。服务端撤权在服务账号设置中按实际流程执行，另获确认。匿名/静态 key 服务的 logout 不会替你撤销 API Key。
+logout 是经确认的本地认证清理，范围随版本变化，不等于撤销远端 grant，不保证运行任务取消；匿名/静态 key 的 logout 不替你撤销 API Key。服务端撤权在账号设置中按实际流程另获确认。
 
-旧 mcpc/keyring/其他客户端凭据不自动导入，跨机器/跨版本也不复制 token 作为默认迁移；按[迁移指南](file-storage.md)重新授权。首版无后台会话/keepalive，不需要也不提供 `close @session`；结束连接不是删除凭据或撤权。
+旧 mcpc/keyring/其他客户端凭据、旧自选状态目录不自动导入，跨机器/跨版本不默认复制 token，见[迁移指南](file-storage.md)。首版无后台会话/keepalive，不提供 close @session；关闭连接不是删除凭据或撤权。

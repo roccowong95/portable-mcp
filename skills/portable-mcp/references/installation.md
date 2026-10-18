@@ -1,86 +1,76 @@
-# 显式安装与固定入口
+# 固定部署与显式安装
 
-## 1. 布局与前提
+## 1. 不提供部署选择
+
+需要 Python 3.9+、现有 PATH 中的 Node/npm。入口不安装或升级 Node，不写系统包、全局 npm 或 shell profile，不提供路径、Node/npm、registry、版本、超时选项或环境覆盖。缺少前提就停止并报告，不换全局 mcporter、浮动 npx 或其他 Node 绕过。
+
+服务配置固定在 **OS 账号真实 home 下的 `.portable-mcp/config/mcporter.json`**。POSIX 通过 `pwd.getpwuid` 定位，Windows 通过系统 profile 定位，忽略环境 HOME/USERPROFILE；改变环境不切换 profile。内部目录也由入口固定管理，不让用户选择。所有操作保持同一机器、同一 OS 账号。
 
 ```text
-<skill-root>/
-  SKILL.md
-  references/
-  examples/mcp.example.json
-  scripts/
-    install_mcporter.py       # 显式安装/更新，不由调用入口触发
-    mcporter_versions.cjs     # 使用 npm 自带 semver 判断版本/Node engines
-    mcporter.py               # 有限的稳定命令集，不透传原生 CLI
-    mcporter_bridge.mjs       # 精确发现/调用，禁止自动 OAuth
-    pmcp-ctl                  # 仅维护 description 能力索引
-    .runtime/mcporter/        # 私有包、lock、安装记录，不提交/分发
-<private-state>/              # 必须是 skill 外的绝对路径
-  config/mcporter.json        # 唯一服务配置：mcpServers + imports: []
-  home/                      # HOME / USERPROFILE
-  data/                      # XDG_DATA_HOME
-  cache/                     # XDG_CACHE_HOME
-  state/                     # XDG_STATE_HOME
-  broker/                    # MCPORTER_DAEMON_DIR；本版不启动 daemon
-  .pmcp.lock                 # 全目录 OS 排他锁
+<skill-root>/scripts/
+  install_mcporter.py       # 用户许可后显式安装/更新
+  mcporter_versions.cjs     # npm 自带 semver 检查 Node engines
+  mcporter.py               # 有限业务命令，不透传原生 CLI
+  mcporter_bridge.mjs       # 发现/精确调用，禁止自动 OAuth
+  pmcp-ctl                  # description 能力索引
+  .runtime/mcporter/        # 内部运行时、lock、安装记录，不分发
+<OS账号真实home>/.portable-mcp/
+  config/mcporter.json      # 唯一服务配置：mcpServers + imports: []
+  home/                    # 内部 HOME/USERPROFILE
+  data/                    # 内部 XDG_DATA_HOME
+  cache/                   # 内部 XDG_CACHE_HOME
+  state/                   # 内部 XDG_STATE_HOME
+  broker/                  # 内部 daemon 路径；本版不启动 daemon
+  .pmcp.lock               # 全 profile OS 锁
 ```
 
-需要 Python 3.9+、**现有** Node 和 npm，不自动安装或升级 Node，不写系统包、全局 npm 或 shell profile。只读 skill 部署需管理员在批准的可写副本预装，不擅自提权。Linux 远端为主要目标；Windows 支持次要，不意味着已完成全部生产 ACL/子进程验收。
+这些路径用于解释隔离/排错，不是可选部署参数。旧自选状态目录不会自动迁移或导入凭据。只读 skill 需管理员在批准的可写副本预装，不擅自提权。Linux 远端为主要目标，Windows 次要，不代表完成全部生产 ACL/子进程验收。
 
-## 2. 版本选择，不是任意 latest 保证
+## 2. 自动选兼容版本，不保证任意 latest
 
-首次安装读取已配置 HTTPS npm registry 的完整 `mcporter` 元数据，借助该 npm 自带的 semver 选出：稳定、未 deprecated、`>=0.9.0`、根包 `engines.node` 匹配实际 Node 的最高版本。未来符合条件的发布也参与选择，不硬钉 0.15.0，也不把 `dist-tags.latest` 当兼容性证明。
+首次显式安装固定读取官方 `https://registry.npmjs.org` 完整元数据，以现有 npm 自带 semver 选择稳定、未 deprecated、`>=0.9.0` 且根包 `engines.node` 匹配现有 Node 的最高版本。无需也不能指定版本、镜像或 npm 配置；不把 `dist-tags.latest` 当兼容性证明。
 
-官方发布元数据中，0.9.0 的根包要求 Node `>=20.11.0`，0.15.0 要求 `>=24`。**这些只是根包条件**：依赖随解析结果变化，根包匹配不等于可安装/可运行。安装使用 `--engine-strict --ignore-scripts --save-exact --no-audit --no-fund`、独立 npm 配置/缓存和 package-lock；依赖不兼容即失败，不 `--force`、不忽略 engines、不改系统 Node。安装成功也不代表所有业务、OAuth 或未来上游 API 已验收；来源见[版本资料](sources.md)。
+官方 0.9.0 的根包要求 Node `>=20.11.0`，0.15.0 要求 `>=24`。**0.9 只是兼容性示例，不要求安装它；根包匹配不等于依赖满足。** 安装内部使用 `--engine-strict --ignore-scripts --save-exact --no-audit --no-fund`、私有 npm 配置/缓存和 package-lock。依赖引擎不兼容就停止，不 force、不忽略 engines、不改系统 Node。未来上游 API 不兼容也失败关闭；来源见[版本资料](sources.md)。
 
-默认 registry 用现有 npm 的 `config get registry` 只读取得（通常为官方 `https://registry.npmjs.org`），不是固定镜像。可显式 `--registry https://registry.npmjs.org`；仅接受 HTTPS，不在 URL 中放用户名、token、query 或 fragment。
+## 3. 只有显式检查、安装和更新
 
-## 3. 显式选择、安装和更新
-
-以下 POSIX 命令均为路径占位示例，执行下载前须得到许可；不在普通 MCP 调用中执行安装。
+下列 `/actual/skill` 替换为实际 skill 安装位置，不是状态路径选项；下载第三方代码前须得到许可。
 
 ```sh
-# 只选择/检查，不安装、不写入；仍可能读取 registry 元数据
+# 只检查/选择，不安装、不写运行时；初次可能读取官方元数据
 python3 /actual/skill/scripts/install_mcporter.py --check
-# 明确指定既有 Node/npm 路径，不调用 npm.cmd 或拼接 shell
-python3 /actual/skill/scripts/install_mcporter.py \
-  --node /absolute/bin/node --npm-cli /absolute/npm/bin/npm-cli.js \
-  --registry https://registry.npmjs.org
-# 管理员确需固定候选版本时；仍校验稳定性、deprecated、最低基线和 Node
-python3 /actual/skill/scripts/install_mcporter.py --version 0.9.0 --check
-```
-
-已存在完整有效安装时，默认离线验证并复用，不重新选择最新版。更新须明确批准：
-
-```sh
+# 显式安装；业务调用不会代做
+python3 /actual/skill/scripts/install_mcporter.py
+# 已有安装默认离线校验并复用；仅更新才重新选择
 python3 /actual/skill/scripts/install_mcporter.py --update --check
 python3 /actual/skill/scripts/install_mcporter.py --update
 ```
 
-安装到 `scripts/.runtime/mcporter/`，包为 `node_modules/mcporter`，CLI 为 `dist/cli.js`；`skill-install.json` 记录精确版本、Node/npm 路径等供入口核对。不得手工伪造/改 marker 让未完成安装通过。更新采用独立 stage 并保留旧副本备份；可能留下 `.runtime/.mcporter-stage-*` / `.mcporter-backup-*`，检查明确绝对路径、无人使用并获准后再清理，不删未知目录。旧 mcpc `.runtime/` 内容不被自动删除或覆盖。
+完成安装后锁定精确版本并复用，不每次追逐最新版。安装器只暴露 `--check` 和 `--update`，不暴露部署参数。内部记录/lock 用于核对完整安装，不得手工伪造；更新的 stage/backup 目录仅在确认确切路径、无人使用及许可后清理，不删除未知目录。旧 mcpc 运行时不自动删除。
 
-`--ignore-scripts` 只禁止安装生命周期脚本，不等于下载包无恶意，也可能使依赖功能不可用。不要为通过安装擅自开启脚本或修改 lockfile。Windows 可用现有 Python/Node 的绝对路径；不因 PATH 有 Node 就宣称平台已验收。
+`--ignore-scripts` 仅禁止安装生命周期脚本，不证明包安全，也可能令依赖功能不可用。不能为通过安装擅自开脚本或改 lockfile。PATH 缺少 Node/npm 时报告前提缺失，不由 skill 改系统环境或选择另一套工具链。
 
-## 4. 初始化与所有调用共用的状态
+## 4. 初始化与固定业务入口
 
 ```sh
-python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp init
-python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp version
-python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp servers
-python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp doctor
+python3 /actual/skill/scripts/mcporter.py init
+python3 /actual/skill/scripts/mcporter.py version
+python3 /actual/skill/scripts/mcporter.py servers
+python3 /actual/skill/scripts/mcporter.py doctor
 ```
 
-`init` 不需要已安装 runtime，创建空的 `config/mcporter.json`，不覆盖已有配置。其余命令先要求有效配置及安装记录。可用 `PMCP_STATE_DIR` 设目录，但固定 `--state-dir` 更不易在新 SSH/exec 中丢失；旧 `MCPC_HOME_DIR` 不使用。
+`init` 无需 runtime，生成固定配置且不覆盖已有内容。其余操作要求有效配置与安装记录。后续 `pmcp` 仅是 `python3 /actual/skill/scripts/mcporter.py` 的简写，不要求创建全局 alias。不传旧 `--` 分隔符、原生 JSON 开关、@session 或 connect 等参数。
 
-后续文档中 `pmcp` 是 `python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp` 的简写，**不是要求创建全局 alias**。`--node /absolute/bin/node`、`--timeout 60000`（毫秒）、`--lock-timeout 30`（秒）放在子命令前。不沿用旧入口的 `--` 分隔符；不传原生 `--json`、`@session`、connect 等参数。
+配置根 key 仅 `mcpServers` / `imports`，imports 明确为 []，每个服务显式 lifecycle ephemeral；所有命令（包括 auth）先校验，不自动改写配置。内部私有 HOME/USERPROFILE、XDG config/data/cache/state 与 daemon 环境隔离运行状态；配置业务 env 不得覆盖隔离/控制变量。这些子进程变量不参与真实 home 的状态根定位。
 
-配置根 key 仅 `mcpServers` / `imports`，imports 明确为 []，每个服务显式生命周期 ephemeral；所有命令（包括 auth）先校验，不自动改写配置。
+内部固定策略：普通 MCP timeout 60 秒，父进程总上限 65 秒；auth/logout 父进程上限 605 秒（600 秒预算加 5 秒清理窗口），不向原生 CLI 传入该预算，后端可能更早结束，不保证授权等待恰好 600 秒；profile 锁等待 30 秒。没有用户参数或环境覆盖。超时不保证远端取消，不为绕过 busy 换目录/账号/客户端，不自动重放。
 
-入口设置私有 HOME/USERPROFILE、XDG config/data/cache/state 及 MCPORTER_DAEMON_DIR，并清除继承的 mcporter/相关控制变量，配置固定为 `config/mcporter.json`。POSIX 新目录 0700、文件 0600，拒绝明显不私有、错误所有者及链接状态；不擅自 chmod 既有目录。Windows 需管理员预建受保护 ACL，入口只验证、不自动改 ACL。目录权限不是加密或沙箱，不防 root/同权限进程。
+POSIX 新目录 0700、文件 0600，拒绝不私有、错误所有者及链接状态，不擅自 chmod 既有目录。Windows 由管理员预设受保护 ACL，入口只验证、不自动改 ACL；不承诺完整生产验收。权限不是加密或沙箱，不防 root/同权限进程。
 
-同一状态目录的全部入口命令由 OS 锁串行化，串行化旧版 vault 读改写事务；旧 0.9 非原子写入崩溃风险仍在，损坏时失败关闭，不自动修复。忙时等待至 lock timeout 后失败，不绕过锁、不自动重放。不要让原生 CLI、其他客户端或另一个入口同时写这个 vault。
+全 profile 操作由 OS 锁串行化；旧 0.9 非原子 vault 写入仍可能因崩溃损坏，失败关闭、不自动修复。不得让原生 CLI 或其他客户端并发复用 vault。
 
-## 5. 第一版生命周期与分发
+## 5. 生命周期、分发与验收
 
-只支持 ephemeral，每个服务必须显式 `"lifecycle": "ephemeral"`，不依赖名称推断默认值。每次发现/调用创建并关闭连接；不保留 `@session`、不启动后台 keepalive。keep-alive/daemon/serve/generate 被拒绝，私有 broker 路径只是防止误用默认命名空间，不是 daemon 能力。旧计划中的持久会话、订阅、后台进程所有权及退出策略延期单独设计验证。
+只支持 ephemeral，每个服务必须显式 `"lifecycle": "ephemeral"`。每次连接后关闭，不保留 @session，不启动 keepalive/daemon/serve/generate。内部 broker 路径只是防止误用默认命名空间；旧持久会话、订阅、后台进程所有权和退出策略延期单独设计验证。
 
-分发仅复制源码，排除 `.runtime/`、node_modules、lock/cache 生成物、私有配置、状态、日志、凭据与部署能力索引。迁移不带 token，见[迁移指南](file-storage.md)。最终应用测试按[仓库约定](../../../AGENTS.md)：**commit 并 push → 用户手动安装 → adb 启动 Amoo 助手 → 开启新会话测试**；提交前不执行测试。
+分发仅复制源码，排除运行时、node_modules、lock/cache 生成物、私有配置、状态、日志、凭据与部署能力索引；迁移不带 token，见[迁移指南](file-storage.md)。最终应用测试按[仓库约定](../../../AGENTS.md)：**commit + push → 用户手动安装 → adb 启动 Amoo → 开启新会话测试**；提交前不执行测试。

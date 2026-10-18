@@ -1,6 +1,6 @@
 # 版本与官方资料
 
-本 skill 不硬钉 0.15，也不承诺任意 `latest` 可用：显式安装选择稳定、未弃用、`>=0.9.0` 且根包 engines 适配**既有 Node** 的最高版本，再以 npm engine-strict 校验解析后的依赖。根包匹配不是依赖可安装或业务验收的证明；不升级系统 Node。
+本 skill 固定使用现有 PATH Node/npm 与官方 `https://registry.npmjs.org`，不提供版本、registry、工具链或路径选择/环境覆盖。显式安装自动选择稳定、未弃用、`>=0.9.0` 且根包 engines 适配**既有 Node** 的最高版本，再以 npm engine-strict 校验依赖并锁定；不升级 Node，不保证任意 latest 可用。0.9 只是兼容性示例，不是要求安装的目标；根包匹配不是依赖可安装或业务验收证明。
 
 ## 已核实的版本来源
 
@@ -21,7 +21,8 @@
 
 - 原生 CLI 在 0.9 与 0.15 间差异显著。本入口不是透传器，仅提供 [SKILL 命令表](../SKILL.md)；不向原生 CLI 盲试参数。
 - 发现/调用走 runtime 适配，不使用原生 call 的拼写纠正/自动重试；普通调用不自动 OAuth。`auth` / `logout` 仅在用户明确操作时使用受限原生流程。
-- `<0.10.0` 的 auth 还需 `--allow-legacy-oauth`，表示用户另行接受已知旧回调风险；不是漏洞修复。`--no-browser` 保守限定为已核实的 `>=0.15.0`，不把新参数猜测移植到 0.9。
+- auth 固定不自动打开浏览器，只支持已核实 >=0.15；旧版失败关闭，无浏览器选项或旧风险接受开关。旧版已有合法 token 的普通操作仍可，不表示能在本入口重新授权；不把新能力猜测移植到 0.9。
+- 配置固定在真实 OS home 下 `.portable-mcp/config/mcporter.json`（POSIX pwd / Windows 系统 profile），不采用环境 HOME/USERPROFILE；旧自选目录不自动导入。内部隔离路径不是用户部署选项。
 - 安装成功不保证未来版本 API 不变；不支持的 API/配置应失败关闭，先审阅版本合同，不擅自升级 Node、补丁、绕过引擎或放开参数透传。
 
 协议背景：[MCP 工具规范](https://modelcontextprotocol.io/specification/latest/server/tools)、[MCP 授权规范](https://modelcontextprotocol.io/specification/latest/basic/authorization)。规范链接是背景资料，不等于具体客户端版本已经完整实现或安全验收。

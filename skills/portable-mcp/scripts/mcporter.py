@@ -2,12 +2,11 @@
 """Private, version-independent MCPorter entry. Never installs or upgrades Node."""
 import argparse
 from contextlib import contextmanager, nullcontext
-from install_mcporter import install_lock, resolve_npm_cli, safe_env
+from install_mcporter import install_lock, resolve_node, resolve_npm_cli, safe_env
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import stat
 import subprocess
@@ -18,6 +17,10 @@ SCRIPTS = Path(__file__).resolve().parent
 RUNTIME = SCRIPTS / ".runtime" / "mcporter"
 PACKAGE = RUNTIME / "node_modules" / "mcporter"
 MAX_CONFIG = 1024 * 1024
+LOCK_TIMEOUT_SECONDS = 30
+OPERATION_TIMEOUT_MS = 60000
+AUTH_TIMEOUT_SECONDS = 600
+CLEANUP_GRACE_SECONDS = 5
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -81,12 +84,30 @@ def check_tree(root):
         windows_acl(root)
 
 
-def prepare_state(raw):
-    if not raw:
-        fail("Specify --state-dir ABSOLUTE_PRIVATE_PATH or PMCP_STATE_DIR consistently")
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        fail("State directory must be absolute")
+def account_home():
+    """Use the OS account database, never caller-supplied HOME/USERPROFILE."""
+    if os.name == "posix":
+        import pwd
+        try:
+            raw = pwd.getpwuid(os.getuid()).pw_dir
+        except KeyError:
+            fail("Current user is absent from the OS account database")
+    elif os.name == "nt":
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x28, None, 0, buffer) != 0:
+            fail("Cannot determine the current Windows account profile")
+        raw = buffer.value
+    else:
+        fail("Unsupported operating system")
+    home = Path(raw)
+    if not home.is_absolute() or not home.is_dir():
+        fail("OS account home must be an existing absolute directory")
+    return home
+
+
+def prepare_state():
+    path = account_home() / ".portable-mcp"
     no_links(path)
     state = path.resolve()
     skill = SCRIPTS.parent
@@ -184,7 +205,7 @@ def read_config(path):
                 fail("Server environment/headers must be objects")
             if field == "env":
                 for key in values:
-                    if key.upper() in {"HOME", "USERPROFILE", "NODE_OPTIONS"} or key.upper().startswith(("XDG_", "MCPORTER_", "PMCP_")):
+                    if key.upper() in {"HOME", "USERPROFILE"} or key.upper().startswith(("XDG_", "MCPORTER_", "PMCP_", "NODE_", "NPM_", "COREPACK_", "MCPC_", "PORTABLE_MCP_")):
                         fail("Server environment cannot override portable isolation or runtime controls")
         if any(key in entry for key in ("record", "recording", "replay", "refreshable_bearer", "refresh")):
             fail("Recording/replay and refreshable bearer extensions are not supported")
@@ -210,10 +231,8 @@ def check_vault_json(state):
             fail("Private vault has an invalid structure; preserve it and recover privately")
 
 
-def child_environment(state):
-    env = {key: value for key, value in os.environ.items()
-           if not key.upper().startswith(("MCPORTER_", "XDG_", "PMCP_"))
-           and key.upper() not in {"NODE_OPTIONS", "NODE_PATH"}}
+def child_environment(state, node):
+    env = safe_env(node)
     env.update({"HOME": str(state / "home"), "USERPROFILE": str(state / "home"),
                 "XDG_CONFIG_HOME": str(state / "config"), "XDG_DATA_HOME": str(state / "data"),
                 "XDG_CACHE_HOME": str(state / "cache"), "XDG_STATE_HOME": str(state / "state"),
@@ -224,24 +243,21 @@ def child_environment(state):
     return env
 
 
-def runtime(node_override):
+def runtime():
     meta = json.loads((RUNTIME / "skill-install.json").read_text(encoding="utf-8"))
     pkg = json.loads((PACKAGE / "package.json").read_text(encoding="utf-8"))
-    if (meta.get("schemaVersion") != 1 or meta.get("package") != "mcporter" or
+    if (not isinstance(meta, dict) or not isinstance(pkg, dict) or
+            meta.get("schemaVersion") != 1 or meta.get("package") != "mcporter" or
+            not isinstance(pkg.get("version"), str) or
             meta.get("version") != pkg.get("version") or pkg.get("name") != "mcporter" or
             meta.get("cli") != "node_modules/mcporter/dist/cli.js"):
         fail("Installed runtime does not match its installation record; reinstall explicitly")
-    chosen = shutil.which(node_override or meta.get("nodeExecutable") or "node")
-    if not chosen:
-        fail("Node executable missing; use --node with the existing compatible Node")
-    node = str(Path(chosen).resolve(strict=True))
+    node, version = resolve_node()
     env = safe_env(node)
-    version = subprocess.run([node, "--version"], check=True, capture_output=True,
-                             text=True, env=env, timeout=30).stdout.strip()
     if version != meta.get("nodeVersion"):
         fail("Node version changed; explicitly run installer --update to revalidate transitive engines (Node is never upgraded)")
     # Locate npm again after relocation; do not embed any package version in the entry.
-    npm_cli = resolve_npm_cli(node, None, meta)
+    npm_cli = resolve_npm_cli(node)
     helper = [node, str(SCRIPTS / "mcporter_versions.cjs"), "--npm-cli", npm_cli, "check-installed"]
     result = subprocess.run(helper, input=json.dumps({"nodeVersion": version, "package": pkg}),
                             capture_output=True, text=True, env=env, timeout=60)
@@ -284,10 +300,6 @@ def execute(argv, env, deadline):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--state-dir", default=os.environ.get("PMCP_STATE_DIR"))
-    p.add_argument("--node", help="Existing Node executable; never installed or upgraded")
-    p.add_argument("--lock-timeout", type=float, default=30)
-    p.add_argument("--timeout", type=int, default=60000, help="Operation timeout in milliseconds")
     sub = p.add_subparsers(dest="command", required=True)
     for op in ("init", "version", "servers", "doctor"):
         sub.add_parser(op)
@@ -301,9 +313,6 @@ def parser():
     auth = sub.add_parser("auth")
     auth.add_argument("server")
     auth.add_argument("--reset", action="store_true")
-    auth.add_argument("--no-browser", action="store_true")
-    auth.add_argument("--allow-legacy-oauth", action="store_true",
-                      help="Explicitly accept v0.9's known callback state validation risk")
     logout = sub.add_parser("logout")
     logout.add_argument("server")
     return p
@@ -311,11 +320,9 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    if not 0 <= args.lock_timeout <= 600 or not 100 <= args.timeout <= 900000:
-        fail("Lock timeout must be 0..600 seconds; operation timeout 100..900000 ms")
-    state = prepare_state(args.state_dir)
+    state = prepare_state()
     config = state / "config" / "mcporter.json"
-    with profile_lock(state, args.lock_timeout), (nullcontext() if args.command == "init" else install_lock(args.lock_timeout)):
+    with profile_lock(state, LOCK_TIMEOUT_SECONDS), (nullcontext() if args.command == "init" else install_lock(LOCK_TIMEOUT_SECONDS)):
         if args.command == "init":
             if not config.exists():
                 with config.open("x", encoding="utf-8") as stream:
@@ -330,10 +337,9 @@ def main():
         server = getattr(args, "server", None)
         if server and server not in data["mcpServers"]:
             fail("Unknown exact server name; configure it explicitly before connecting")
-        node, version = runtime(args.node)
-        env = child_environment(state)
-        # Node selected here also resolves stdio server shebangs consistently.
-        env["PATH"] = str(Path(node).parent) + os.pathsep + env.get("PATH", "")
+        node, version = runtime()
+        # The same discovered Node resolves stdio server shebangs consistently.
+        env = child_environment(state, node)
         if args.command == "version":
             print(json.dumps({"package": "mcporter", "version": version, "node": node}))
             return 0
@@ -343,17 +349,12 @@ def main():
                 argv = cli + ["config", "logout", server]
             else:
                 parts = tuple(int(part) for part in version.split(".")[:3])
-                if parts < (0, 10, 0) and not args.allow_legacy_oauth:
-                    fail("Legacy OAuth callback accepts missing state; explicit risk acceptance via --allow-legacy-oauth is required, see authentication guide")
-                argv = cli + ["auth", server]
+                if parts < (0, 15, 0):
+                    fail("OAuth is unavailable with this compatible runtime: fixed headless safety baseline requires mcporter >=0.15.0. Use header authentication; Node will not be changed")
+                argv = cli + ["auth", server, "--no-browser"]
                 if args.reset:
                     argv.append("--reset")
-                if args.no_browser:
-                    parts = tuple(int(part) for part in version.split(".")[:3])
-                    if parts < (0, 15, 0):
-                        fail("--no-browser is verified only for mcporter >=0.15.0; never assume old auth is headless")
-                    argv.append("--no-browser")
-            code = execute(argv, env, args.timeout / 1000 + 5)
+            code = execute(argv, env, AUTH_TIMEOUT_SECONDS + CLEANUP_GRACE_SECONDS)
         else:
             argv = [node, str(SCRIPTS / "mcporter_bridge.mjs"), str(PACKAGE), str(config), args.command]
             if server:
@@ -362,8 +363,8 @@ def main():
                 argv.append(args.tool)
             if getattr(args, "query", None):
                 argv.extend(["--query", args.query])
-            argv.extend(["--timeout", str(args.timeout)])
-            code = execute(argv, env, args.timeout / 1000 + 5)
+            argv.extend(["--timeout", str(OPERATION_TIMEOUT_MS)])
+            code = execute(argv, env, OPERATION_TIMEOUT_MS / 1000 + CLEANUP_GRACE_SECONDS)
         check_tree(state)
         return code if code >= 0 else 1
 

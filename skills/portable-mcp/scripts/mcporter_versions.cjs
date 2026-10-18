@@ -71,22 +71,13 @@ function main() {
     if (!input.versions || typeof input.versions !== 'object' || Array.isArray(input.versions)) {
       fail('Registry metadata must contain a versions object');
     }
-    if (input.requestedVersion !== undefined) {
-      if (typeof input.requestedVersion !== 'string' ||
-          !Object.prototype.hasOwnProperty.call(input.versions, input.requestedVersion) ||
-          !eligible(input.requestedVersion, input.versions[input.requestedVersion])) {
-        fail('Requested exact version is missing, deprecated, prerelease, below 0.9.0 or incompatible with Node');
-      }
-      pkg = input.versions[input.requestedVersion];
-    } else {
-      const versions = Object.keys(input.versions)
-        .filter((version) => eligible(version, input.versions[version]))
-        .sort(semver.rcompare);
-      if (!versions.length) {
-        fail('No stable non-deprecated mcporter >=0.9.0 supports this Node; Node will not be upgraded');
-      }
-      pkg = input.versions[versions[0]];
+    const versions = Object.keys(input.versions)
+      .filter((version) => eligible(version, input.versions[version]))
+      .sort(semver.rcompare);
+    if (!versions.length) {
+      fail('No stable non-deprecated mcporter >=0.9.0 supports this Node; Node will not be upgraded');
     }
+    pkg = input.versions[versions[0]];
   }
   process.stdout.write(JSON.stringify({ version: pkg.version, engineRange: pkg.engines.node }) + '\n');
 }
