@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "docs": {
+      "url": "https://mcp.example.invalid/mcp"
+    },
+    "secured": {
+      "url": "https://secure.example.invalid/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_TOKEN}"
+      }
+    },
+    "local": {
+      "command": "node",
+      "args": ["/absolute/path/to/audited-server.mjs"],
+      "env": {"SERVICE_REGION": "test"}
+    }
+  }
+}

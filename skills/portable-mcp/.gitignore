@@ -1,0 +1,8 @@
+scripts/.runtime/
+**/node_modules/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+.pmcp-meta.lock/
+.pmcp-meta-*.tmp
