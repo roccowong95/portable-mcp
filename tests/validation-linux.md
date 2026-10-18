@@ -76,4 +76,25 @@ python3 /root/.openclaw/workspace-task/skills/portable-mcp/scripts/mcporter.py v
 
 该调用未产生脚本 stdout 或退出码；具体关联原因未确定，不能从提示推断匹配规则。此前 Amoo 自行使用临时链接得到的诊断不计入原入口验收证据；不应继续通过链接、复制入口、改名等绕过宿主网关。SSH 原入口成功只证明在所述命令环境下运行正常，**不证明 Amoo 网关已放行**。
 
-剩余验收：用户从 `src/` 发布/安装并确认后，以 Amoo 新会话验证 skill 发现与原始入口；若仍被拦截，保留原错并由宿主排查。真实服务及 OAuth/刷新需另行许可与独立验证，尤其当前 Node 22 对应的 0.9.0 在本入口中禁止新 OAuth 授权。
+本轮技术验证时的剩余验收：用户从 `src/` 发布/安装并确认后，以 Amoo 新会话验证 skill 发现与原始入口；若仍被拦截，保留原错并由宿主排查。真实服务及 OAuth/刷新需另行许可与独立验证，尤其当前 Node 22 对应的 0.9.0 在本入口中禁止新 OAuth 授权。
+
+## 发布确认后的 Amoo 复测（2026-10-19 02:25，Asia/Shanghai）
+
+用户确认已发布并要求继续测试。通过 adb 连接设备 `ZYPZ261A01M68R000F2`，在 Amoo 界面创建新会话，发送只读验收请求：加载已安装 portable-mcp skill，以原始 Python 入口执行 version、servers、doctor；禁止安装、更新、init、OAuth、业务调用及任何绕行。
+
+观察结果：
+
+- Amoo 报告先通过 `read` 成功读取 `/root/.openclaw/workspace-task/skills/portable-mcp/SKILL.md` 正文第 1–65 行，包含“固定策略与有限业务入口”和稳定命令表。该证据来自实际会话回复及其历史自查，支持 skill 可发现/可读取；没有据此声称核验了部署包完整 hash。
+- 随后唯一一次 `exec` 的命令参数如下，仍在执行前返回上节所保留的同一金山文档 OAuth 提示，并出现授权卡片。
+
+```sh
+cd /root/.openclaw/workspace-task/skills/portable-mcp && ls scripts/ && python3 scripts/mcporter.py version
+```
+
+- 未得到 shell/script stdout 或退出码。第一条受阻后未继续 servers、doctor。两者未验证，不计为脚本自身失败。
+- 未点击授权，未安装/更新运行时，未做 OAuth、业务调用或替代入口。后续仅要求 Amoo 从现有会话历史解释工具名和读取证据，不再执行工具。
+- Amoo 曾推断“网关误匹配”，但本记录不采纳该根因断言：实际触发规则及为何关联金山文档均 **unknown**。
+
+结论：发布后的 skill 发现/读取有会话证据，**原始入口执行及端到端验收仍未通过**，需要宿主侧排查上述 `exec` 的授权关联。新的真实业务/OAuth 验证并未获得额外许可，也未执行。
+
+附：此前 push 网络中断的验证资料提交 `8eb970854c64690f889cd2e9b1e2e3f161b26856`，本次重试得到 `Everything up-to-date`，并通过 `git ls-remote origin refs/heads/main` 确认该 hash 已在远端；这只说明源码同步状态，不等于部署状态。
