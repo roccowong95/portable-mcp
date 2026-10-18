@@ -73,4 +73,4 @@ POSIX 新目录 0700、文件 0600，拒绝不私有、错误所有者及链接�
 
 只支持 ephemeral，每个服务必须显式 `"lifecycle": "ephemeral"`。每次连接后关闭，不保留 @session，不启动 keepalive/daemon/serve/generate。内部 broker 路径只是防止误用默认命名空间；旧持久会话、订阅、后台进程所有权和退出策略延期单独设计验证。
 
-分发仅复制源码，排除运行时、node_modules、lock/cache 生成物、私有配置、状态、日志、凭据与部署能力索引；迁移不带 token，见[迁移指南](file-storage.md)。最终应用测试按[仓库约定](../../../AGENTS.md)：**commit + push → 用户手动安装 → adb 启动 Amoo → 开启新会话测试**；提交前不执行测试。
+分发仅复制源码，排除运行时、node_modules、lock/cache 生成物、私有配置、状态、日志、凭据与部署能力索引；迁移不带 token，见[迁移指南](file-storage.md)。安装选择、离线检查、宿主集成、真实授权与过期刷新分别验证，不互相替代。

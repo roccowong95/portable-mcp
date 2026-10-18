@@ -9,7 +9,7 @@
 3. 按[安装约定](installation.md)取得下载许可，使用现有 PATH Node/npm 显式安装；固定官方 registry，自动选兼容最高稳定版本后锁定。不提供版本/路径/工具链选择，不升级系统 Node，不覆盖旧运行时其他内容。
 4. 用 `mcporter.py init` 建立 OS 账号真实 home 下固定 `.portable-mcp` 状态（POSIX pwd、Windows 系统 profile，不采用环境 HOME/USERPROFILE）。编辑返回的 `.portable-mcp/config/mcporter.json`，仅迁入批准的 URL、绝对 command/args、必要业务 env 引用；根 key 仅 mcpServers/imports，`imports: []`，每个服务显式 `"lifecycle": "ephemeral"`。不直接拷贝旧客户端全部配置。
 5. OAuth 先重新确认账号/权限，再按[显式授权](authentication.md)执行 `auth SERVER`。auth 固定不自动开浏览器，只支持 >=0.15；旧版无接受风险开关。现有 Node 没有兼容现代路径则停止，不升级 Node。旧版已有合法 token 的普通操作可用不代表可重新授权；不导入旧 keyring、其他客户端 vault 或 tokenCacheDir。
-6. commit + push 后由用户手动安装，再通过 adb 启动 Amoo 并开新会话测试；分别确认发现、schema、低风险调用及真实过期刷新。关闭旧会话、本地 logout、服务端撤权分别获许可，不互相替代。
+6. 安装后分别确认发现、schema、经批准的低风险调用及真实过期刷新。关闭旧会话、本地 logout、服务端撤权分别获许可，不互相替代。
 
 ## 内部凭据布局，不是部署选项
 
