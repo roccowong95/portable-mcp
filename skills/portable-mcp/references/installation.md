@@ -1,73 +1,86 @@
-# 安装和运行 mcpc
+# 显式安装与固定入口
 
-## 1. 约定的目录
+## 1. 布局与前提
 
 ```text
 <skill-root>/
   SKILL.md
-  references/                # 按需读取的说明
+  references/
+  examples/mcp.example.json
   scripts/
-    install_mcpc.py          # 显式安装，不在调用时自动运行
-    mcpc.py                  # 固定入口，转发 stdin/argv，不做自动重试
-    force_file_store.py      # 可选，本地文件凭据补丁
-    .runtime/               # 自动生成的包、lock、缓存；不打包、不提交
-<private-state>/             # 在 skill 外：会话、profile、日志，可能含凭据
-<private-config>/mcp.json    # 在 skill 外：服务连接配置
+    install_mcporter.py       # 显式安装/更新，不由调用入口触发
+    mcporter_versions.cjs     # 使用 npm 自带 semver 判断版本/Node engines
+    mcporter.py               # 有限的稳定命令集，不透传原生 CLI
+    mcporter_bridge.mjs       # 精确发现/调用，禁止自动 OAuth
+    pmcp-ctl                  # 仅维护 description 能力索引
+    .runtime/mcporter/        # 私有包、lock、安装记录，不提交/分发
+<private-state>/              # 必须是 skill 外的绝对路径
+  config/mcporter.json        # 唯一服务配置：mcpServers + imports: []
+  home/                      # HOME / USERPROFILE
+  data/                      # XDG_DATA_HOME
+  cache/                     # XDG_CACHE_HOME
+  state/                     # XDG_STATE_HOME
+  broker/                    # MCPORTER_DAEMON_DIR；本版不启动 daemon
+  .pmcp.lock                 # 全目录 OS 排他锁
 ```
 
-这种布局适用于 Agent 有文件读取/命令执行能力、skill 目录可写的环境。只读/集中管理的 skill 不强行改权限，改用管理员预装入口。运行时依赖与发布源码分开，私有状态始终在 skill 外，避免复制 skill 时携带 token。
+需要 Python 3.9+、**现有** Node 和 npm，不自动安装或升级 Node，不写系统包、全局 npm 或 shell profile。只读 skill 部署需管理员在批准的可写副本预装，不擅自提权。Linux 远端为主要目标；Windows 支持次要，不意味着已完成全部生产 ACL/子进程验收。
 
-## 2. 前提与授权
+## 2. 版本选择，不是任意 latest 保证
 
-- Python 3.9+、Node.js >=22.12.0、npm。无需 OpenClaw、Stepx 或宿主 MCP 连接器。
-- 当前基线锁定 `@apify/mcpc@0.7.0`，不意味着最新、安全认证或支持所有平台。
-- 安装会下载第三方代码；须先获得用户许可。安装脚本使用 `--ignore-scripts --save-exact --no-audit --no-fund`，保留 package-lock；这不等于完整供应链验证或可在未验证平台使用。
-- Linux 已做过 CLI/持久 bridge 测试；Windows 原生 bridge/ACL、macOS keychain 不由此保证。原生不支持时选用户批准的 Linux/WSL/远端环境，不偷偷换执行位置。
+首次安装读取已配置 HTTPS npm registry 的完整 `mcporter` 元数据，借助该 npm 自带的 semver 选出：稳定、未 deprecated、`>=0.9.0`、根包 `engines.node` 匹配实际 Node 的最高版本。未来符合条件的发布也参与选择，不硬钉 0.15.0，也不把 `dist-tags.latest` 当兼容性证明。
 
-先检查实际 Python、Node/npm。不要把另一个同名工具 mcporter 的参数套进来。
+官方发布元数据中，0.9.0 的根包要求 Node `>=20.11.0`，0.15.0 要求 `>=24`。**这些只是根包条件**：依赖随解析结果变化，根包匹配不等于可安装/可运行。安装使用 `--engine-strict --ignore-scripts --save-exact --no-audit --no-fund`、独立 npm 配置/缓存和 package-lock；依赖不兼容即失败，不 `--force`、不忽略 engines、不改系统 Node。安装成功也不代表所有业务、OAuth 或未来上游 API 已验收；来源见[版本资料](sources.md)。
 
-## 3. 显式安装
+默认 registry 用现有 npm 的 `config get registry` 只读取得（通常为官方 `https://registry.npmjs.org`），不是固定镜像。可显式 `--registry https://registry.npmjs.org`；仅接受 HTTPS，不在 URL 中放用户名、token、query 或 fragment。
 
-POSIX 示例（将路径替换成实际 skill 根目录）：
+## 3. 显式选择、安装和更新
+
+以下 POSIX 命令均为路径占位示例，执行下载前须得到许可；不在普通 MCP 调用中执行安装。
 
 ```sh
-python3 /actual/skill/scripts/install_mcpc.py
+# 只选择/检查，不安装、不写入；仍可能读取 registry 元数据
+python3 /actual/skill/scripts/install_mcporter.py --check
+# 明确指定既有 Node/npm 路径，不调用 npm.cmd 或拼接 shell
+python3 /actual/skill/scripts/install_mcporter.py \
+  --node /absolute/bin/node --npm-cli /absolute/npm/bin/npm-cli.js \
+  --registry https://registry.npmjs.org
+# 管理员确需固定候选版本时；仍校验稳定性、deprecated、最低基线和 Node
+python3 /actual/skill/scripts/install_mcporter.py --version 0.9.0 --check
 ```
 
-若 Node 不在 PATH，可指定已核实的可执行文件；找不到 npm 时可指定 npm-cli.js：
+已存在完整有效安装时，默认离线验证并复用，不重新选择最新版。更新须明确批准：
 
 ```sh
-python3 /actual/skill/scripts/install_mcpc.py \
-  --node /actual/node --npm-cli /actual/npm/bin/npm-cli.js
+python3 /actual/skill/scripts/install_mcporter.py --update --check
+python3 /actual/skill/scripts/install_mcporter.py --update
 ```
 
-脚本不会写全局 npm 安装，不会修改 shell profile，不连接任何 MCP，不运行真实 OAuth。默认从淘宝 npm 镜像 `https://registry.npmmirror.com` 下载固定版本；需要其它源时用 `--registry https://...` 指定，脚本只接受 https 地址。只接受空 `.runtime/` 或验证已完成的同版本安装；安装失败可能留下非空目录，应检查后由用户批准清理/换副本，不盲目覆盖。升级须重新审核，不运行浮动 `npx @latest`。
+安装到 `scripts/.runtime/mcporter/`，包为 `node_modules/mcporter`，CLI 为 `dist/cli.js`；`skill-install.json` 记录精确版本、Node/npm 路径等供入口核对。不得手工伪造/改 marker 让未完成安装通过。更新采用独立 stage 并保留旧副本备份；可能留下 `.runtime/.mcporter-stage-*` / `.mcporter-backup-*`，检查明确绝对路径、无人使用并获准后再清理，不删未知目录。旧 mcpc `.runtime/` 内容不被自动删除或覆盖。
 
-Windows 可用已安装 Python 的绝对路径；脚本支持以 Node 执行 npm-cli.js，避免 `.cmd`/shell 拼接。Windows PATH 中的 Node/npm 不代表后台 bridge 已受支持。
+`--ignore-scripts` 只禁止安装生命周期脚本，不等于下载包无恶意，也可能使依赖功能不可用。不要为通过安装擅自开启脚本或修改 lockfile。Windows 可用现有 Python/Node 的绝对路径；不因 PATH 有 Node 就宣称平台已验收。
 
-## 4. 固定入口和私有状态
+## 4. 初始化与所有调用共用的状态
 
 ```sh
-python3 /actual/skill/scripts/mcpc.py \
-  --state-dir /absolute/private/mcpc-state -- --version
-python3 /actual/skill/scripts/mcpc.py \
-  --state-dir /absolute/private/mcpc-state -- --json
+python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp init
+python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp version
+python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp servers
+python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp doctor
 ```
 
-下文所有 `mcpc …` 都是此完整前缀的简写。也可设置 `MCPC_HOME_DIR` 后省略 `--state-dir`，但固定参数较不容易在新 SSH/exec 中丢失。必要时 `--node /absolute/path/node` 放在 `--` 之前。
+`init` 不需要已安装 runtime，创建空的 `config/mcporter.json`，不覆盖已有配置。其余命令先要求有效配置及安装记录。可用 `PMCP_STATE_DIR` 设目录，但固定 `--state-dir` 更不易在新 SSH/exec 中丢失；旧 `MCPC_HOME_DIR` 不使用。
 
-入口会校验包版本、创建状态目录（POSIX 0700）并拒绝明显的非私有权限和 skill 内状态；不会擅自 chmod 现有目录。Windows ACL 必须由管理员设置。不是多租户沙箱，也不能阻止同权限/root 读取。
+后续文档中 `pmcp` 是 `python3 /actual/skill/scripts/mcporter.py --state-dir /absolute/private/pmcp` 的简写，**不是要求创建全局 alias**。`--node /absolute/bin/node`、`--timeout 60000`（毫秒）、`--lock-timeout 30`（秒）放在子命令前。不沿用旧入口的 `--` 分隔符；不传原生 `--json`、`@session`、connect 等参数。
 
-**登录、连接、发现、调用要保持同一身份、入口、状态目录和 profile。** 新 SSH 不自动继承上次 export；不要改入口后宣称已有 token 可用。
+配置根 key 仅 `mcpServers` / `imports`，imports 明确为 []，每个服务显式生命周期 ephemeral；所有命令（包括 auth）先校验，不自动改写配置。
 
-状态目录不是 MCP 连接配置，也不一定包含 token：OS keyring 的 host/profile 命名可能跨状态目录共享。真实 OAuth 前读 [authentication.md](authentication.md)。如需强制文件后端，需单独批准 [file-storage.md](file-storage.md) 的版本绑定补丁；安装脚本不自动打补丁。
+入口设置私有 HOME/USERPROFILE、XDG config/data/cache/state 及 MCPORTER_DAEMON_DIR，并清除继承的 mcporter/相关控制变量，配置固定为 `config/mcporter.json`。POSIX 新目录 0700、文件 0600，拒绝明显不私有、错误所有者及链接状态；不擅自 chmod 既有目录。Windows 需管理员预建受保护 ACL，入口只验证、不自动改 ACL。目录权限不是加密或沙箱，不防 root/同权限进程。
 
-## 5. 验收和分发
+同一状态目录的全部入口命令由 OS 锁串行化，串行化旧版 vault 读改写事务；旧 0.9 非原子写入崩溃风险仍在，损坏时失败关闭，不自动修复。忙时等待至 lock timeout 后失败，不绕过锁、不自动重放。不要让原生 CLI、其他客户端或另一个入口同时写这个 vault。
 
-1. `--version`、`--help` 成功。
-2. 只连接一台已批准服务，`tools-list` / `tools-get` 获取实际 schema。
-3. 用户允许的低风险调用，通过 JSON stdin 提交，检查结果语义。
-4. 用新的 exec/SSH 重复发现，验证状态/必要授权持久性；OAuth 刷新另行验收。
-5. 临时会话结束后 `close`；不是撤权或删除凭据。
+## 5. 第一版生命周期与分发
 
-分发只复制 skill 源文件，排除 `.runtime/`、`node_modules/`、缓存、私有配置/状态/日志及凭据。新增 MCP 通常只改外部配置与连接，不改 skill。转移安装后的 skill 可能让旧 bridge 的代码路径失效；先确认无人使用，关闭其会话，在新位置重新安装/连接，不搬运 token。
+只支持 ephemeral，每个服务必须显式 `"lifecycle": "ephemeral"`，不依赖名称推断默认值。每次发现/调用创建并关闭连接；不保留 `@session`、不启动后台 keepalive。keep-alive/daemon/serve/generate 被拒绝，私有 broker 路径只是防止误用默认命名空间，不是 daemon 能力。旧计划中的持久会话、订阅、后台进程所有权及退出策略延期单独设计验证。
+
+分发仅复制源码，排除 `.runtime/`、node_modules、lock/cache 生成物、私有配置、状态、日志、凭据与部署能力索引。迁移不带 token，见[迁移指南](file-storage.md)。最终应用测试按[仓库约定](../../../AGENTS.md)：**commit 并 push → 用户手动安装 → adb 启动 Amoo 助手 → 开启新会话测试**；提交前不执行测试。

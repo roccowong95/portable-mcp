@@ -51,7 +51,7 @@ python3 <skill-root>/scripts/pmcp-ctl meta-sync --input ./capabilities.json --re
 
 默认合并：只新增或更新清单中的条目，其它条目保留。加 `--replace` 时以清单整体替换索引，清单外的条目不保留。清单文件必须是普通文件、不超过 64 KiB，且不能是符号链接；脚本仍不访问网络、MCP 配置或凭据。
 
-Windows 可用已核实的 `python` / Python 绝对路径代替 `python3`。POSIX 用户也可自行给 `scripts/pmcp-ctl` 添加执行权限并使用完整路径直接调用；不需要网络、mcpc runtime 或状态目录。
+Windows 可用已核实的 `python` / Python 绝对路径代替 `python3`。POSIX 用户也可自行给 `scripts/pmcp-ctl` 添加执行权限并使用完整路径直接调用；不需要网络、mcporter runtime 或状态目录。
 
 脚本用 `Path(__file__).resolve().parent.parent / "SKILL.md"` 定位自身 skill，不依赖 cwd、宿主平台、固定用户名或安装目录。整个目录搬迁后继续有效；通过符号链接启动时修改真实脚本旁的 skill，不是链接旁的文档。
 
@@ -73,7 +73,7 @@ Windows 可用已核实的 `python` / Python 绝对路径代替 `python3`。POSI
 3. 新会话/宿主重新扫描 skill 后检查触发效果；当前会话可能仍缓存旧 description，CLI 不重启或刷新宿主。
 4. 服务不再提供时用 `meta-rm` 避免误路由。实际关闭会话、删除配置、撤销授权是另外的操作，不由本工具执行。
 
-名称只是索引标识，不强制等于 MCP entry 或 `@session`。发布新副本前移除部署特有索引；CLI 不自动扫描配置、连接所有服务、登录、执行工具、拉取描述或修改 OAuth 凭据。
+名称只是索引标识，不强制等于 MCP 配置服务名。`@session` 属于旧 mcpc，会话名不是本版标识；本版直接使用精确配置服务名，索引不创建或恢复会话。发布新副本前移除部署特有索引；CLI 不自动扫描配置、连接所有服务、登录、执行工具、拉取描述或修改 OAuth 凭据。
 
 ## 输入与安全
 

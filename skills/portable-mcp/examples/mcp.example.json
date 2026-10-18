@@ -1,18 +1,28 @@
 {
   "mcpServers": {
     "docs": {
-      "url": "https://mcp.example.invalid/mcp"
+      "lifecycle": "ephemeral",
+      "baseUrl": "https://mcp.example.invalid/mcp"
     },
     "secured": {
-      "url": "https://secure.example.invalid/mcp",
+      "lifecycle": "ephemeral",
+      "baseUrl": "https://secure.example.invalid/mcp",
       "headers": {
         "Authorization": "Bearer ${MCP_API_TOKEN}"
       }
     },
+    "oauth-service": {
+      "lifecycle": "ephemeral",
+      "baseUrl": "https://oauth.example.invalid/mcp",
+      "auth": "oauth"
+    },
     "local": {
-      "command": "node",
+      "lifecycle": "ephemeral",
+      "command": "/absolute/bin/node",
       "args": ["/absolute/path/to/audited-server.mjs"],
+      "cwd": "/absolute/path/to/server-workdir",
       "env": {"SERVICE_REGION": "test"}
     }
-  }
+  },
+  "imports": []
 }

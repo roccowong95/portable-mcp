@@ -1,35 +1,31 @@
-# 可选：强制 mcpc 0.7.0 使用文件凭据
+# 从 mcpc 迁移：不再打文件存储补丁
 
-## 何时需要
+旧版使用 `@apify/mcpc@0.7.0`、`MCPC_HOME_DIR`、`@session` 和可选 keychain 源码补丁。本版改为 `mcporter` 原生文件 vault + 私有 HOME/XDG 隔离，**不需要也不允许把旧文件后端补丁套到新包**。旧 `install_mcpc.py`、`mcpc.py`、`force_file_store.py` 保留为失败关闭的退役提示，不再执行旧安装、连接或补丁。
 
-无桌面服务器的 OS keyring 可能退到仅进程内存；同进程登录成功，新 SSH 却找不到 token。`MCPC_HOME_DIR` 本身不能强制文件后端，也不是 keyring 命名空间。
+## 迁移步骤
 
-优先按官方支持的平台部署；若用户明确选择文件保存，本 skill 附带**版本/源码 SHA 绑定的本地补丁**，只修改独立 mcpc 副本中 keychain 的探测函数，使其使用已有 credentials.json fallback。不是官方 CLI flag，不修复 OAuth state/并发刷新问题，不迁移任何已有秘密。
+1. 确认旧部署有无正在运行的工作/会话及使用者。不要 broad kill node，不自动删除旧 `.runtime/`、keyring、状态或授权。
+2. 保留旧源码/状态直至管理员明确批准处理；不要打印或复制 access token、refresh token、PKCE、client secret。迁移 skill 不迁移凭据。
+3. 按[安装约定](installation.md)，用既有 Node/npm 显式安装兼容稳定 mcporter 到 `scripts/.runtime/mcporter/`。不升级系统 Node，也不覆盖旧 `.runtime/` 中的其他内容。
+4. 在 skill 外新建受保护私有状态目录，用 `mcporter.py --state-dir ABS init` 生成空配置。只将经批准的服务 URL、绝对 command/args、必要 env 引用迁入该目录的 `config/mcporter.json`，保留 `"imports": []`，为每个服务明确 `"lifecycle": "ephemeral"`；根 key 仅 mcpServers/imports。不直接拷贝旧客户端全部配置。
+5. 对 OAuth 服务按[显式授权](authentication.md)重新确认账号/权限并 `auth SERVER`。不自动导入旧 mcpc keyring、其他 mcporter 客户端 vault 或历史 tokenCacheDir。跨版本升级如 vault 路径改变，也不自动拷贝/宣称 token 通用；需要时重新授权。
+6. 经用户安装后的新 exec/SSH 和 Amoo 新会话分别确认发现、schema 和低风险业务调用；真实过期刷新另行确认。关闭旧会话、本地 logout、服务端撤权是独立操作，分别取得许可。
 
-## 执行前
+## 新版凭据布局
 
-- 获得修改此独立副本的许可；停止使用它的会话/登录进程，确认不会影响其他使用者。
-- 仅适用于安装脚本得到的审计基线 0.7.0；哈希不一致立即停止，不用模糊替换。
-- 原始 SHA256 `347235ccd693c74325fb37b49ec29a0b73128cc2d9c2cd42e55dd2ec18d93762`；补丁后 `51fac25726f5d15a78882780bc657cdac13831e1b847b324b85394342370829c`。
+| 分支 | 默认文件位置（由固定入口隔离） |
+|---|---|
+| 旧版 mcporter 0.9 等忽略 XDG 的 vault | `<private-state>/home/.mcporter/credentials.json` |
+| 现代版（0.15 已核实）XDG vault | `<private-state>/data/mcporter/credentials.json` |
 
-先检查（不修改）：
+两者都在 skill 外的私有目录；不配置 `tokenCacheDir`，不使用真实用户 HOME 的默认 vault。路径选择取决于具体安装版本，不能仅因升级后有旧文件就假定新版本已读取它。
 
-```sh
-python3 /actual/skill/scripts/force_file_store.py \
-  --package /actual/skill/scripts/.runtime/node_modules/@apify/mcpc
-```
+这些是**明文 JSON**，目录权限不是加密；不抵抗 root/同权限进程、备份泄露、环境泄露或恶意 stdio 子进程。POSIX 用私有所有者和目录 0700/文件 0600；Windows 管理员先设置受保护 ACL，入口检查而不擅自改权限，不宣称完整生产 ACL 验收。
 
-明确批准后才 `--apply`：
+旧 0.9 vault 写入非原子，崩溃可损坏 JSON，入口不自动修复/重置；旧 callback state 校验还存在已知缺陷，`<0.10` auth 需另行风险同意与 `--allow-legacy-oauth`，详见[认证门槛](authentication.md)。这些问题都不因迁移/私有权限/锁而消失。
 
-```sh
-python3 /actual/skill/scripts/force_file_store.py \
-  --package /actual/skill/scripts/.runtime/node_modules/@apify/mcpc --apply
-```
+入口的 OS 锁覆盖全部状态操作，尤其串行化旧版 vault 的读改写；所有客户端必须遵守同一入口，不直接调用 native CLI或并发共享凭据。分发排除运行时、状态、配置、日志、vault 和部署索引。
 
-原文件备份为同目录 `keychain.js.before-file-store`。不要在包管理器并发更新时执行；脚本不是完整事务/并发安全部署器。若需回滚，停止此副本使用者，核对备份和当前哈希，由管理员恢复；不要覆盖新版本。
+## 为何不继续旧方案
 
-## 持久性与保护
-
-新授权写入所选 `MCPC_HOME_DIR/credentials.json`，明文 token 依赖目录 0700、文件 0600（Windows 用 ACL）。不把文件打印、交给模型、纳入 skill 包或版本库；不要自行复制 keyring token，按需要重新授权。
-
-新 exec/SSH 下用相同入口/profile 做只读发现，才验证持久性。目录权限不等于加密，不抵抗 root。文件存储的刷新竞争、写入失败及回调 state 缺口仍见 [authentication.md](authentication.md)。
+mcpc 的源码 SHA 绑定补丁与 mcporter 无关；文件后端本身也不能修复 OAuth 回调、刷新竞争、服务端撤权或跨进程身份绑定。旧计划的 keepalive/后台会话同样不随迁移继承：首版只提供 ephemeral，daemon/持久连接的版本差异与所有权需单独验证，见[边界与排错](troubleshooting.md)。
