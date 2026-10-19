@@ -28,7 +28,8 @@ python3 <skill-root>/scripts/pmcp.py config-add SERVER
 ```
 
 - `--url` 与 `--command` 必须且只能选一个；服务名精确使用配置 key。同名服务一律拒绝；当前没有 replace/remove 命令，不用变名或直接编辑绕过审核。
-- URL 不得含 userinfo、query 或 fragment；不在 URL 中放账号、token 或秘密。通常用 HTTPS，不为连接成功关闭 TLS 或擅自改用明文 HTTP。协议兼容性仍由所选依赖版本和服务决定。
+- 支持用户批准的完整 HTTP(S) URL，包括 `?token=...` 和其他 query，原样交给 backend，不剥离或改写 query；仍拒绝 userinfo、fragment、空白、反斜杠及无效协议/host/port。通常用 HTTPS，不为连接成功关闭 TLS 或擅自改用明文 HTTP。协议兼容性仍由所选依赖版本和服务决定。
+- 含凭据的 URL 只保存到私有配置，不写入 skill、能力索引、示例、回复或日志；示例只用占位值。它不同于 OAuth callback/code，后者的安全规则不变。完整 URL 会进入原生配置 CLI 的 argv，即使在可信环境也不能保证其不可见；须由用户批准并在受控环境处理，不宣称秘密不会进入 argv。
 - stdio 用 `--command`，参数逐个重复 `--arg`；以 `--` 开头的参数用 `--arg=--someflag`，不是原生 CLI 透传。command 必须非空；command/args 只放普通公开字符串，拒绝控制字符，且**禁止将秘密放进其中**；本入口不是可靠秘密检测器。优先使用经审核的绝对可执行/脚本路径，不能自动下载或安装服务器。
 - `--cwd` 仅限 stdio，必须是实际已存在的绝对目录。配置命令不启动该程序；后续 tools/schema/call 连接时会真正启动。
 - `--env` 可重复，值只能是环境引用，例如单引号保护的 `'SERVICE_REGION=${SERVICE_REGION}'`，不接受字面值（即使是公开 region）。`--header` 可重复，值只接受 `${VAR}` 或 `Bearer ${VAR}`，例如 `'Authorization=Bearer ${MCP_API_TOKEN}'`；不接受其他字面前缀。不放字面 token/key，不让 shell 提前展开引用。
@@ -39,6 +40,8 @@ python3 <skill-root>/scripts/pmcp.py config-add SERVER
 示例仅展示格式，不是安装或连接授权：
 
 ```sh
+# 仅占位 query，不含真实 secret；完整 URL 用引号保护，避免 shell 解释 & 等字符
+python3 /actual/skill/scripts/pmcp.py config-add query-service --url 'https://example.invalid/mcp?token=EXAMPLE_ONLY' --dry-run
 python3 /actual/skill/scripts/pmcp.py config-add secured --url https://secure.example.invalid/mcp --header 'Authorization=Bearer ${MCP_API_TOKEN}'
 python3 /actual/skill/scripts/pmcp.py config-add oauth-service --url https://oauth.example.invalid/mcp --oauth
 python3 /actual/skill/scripts/pmcp.py config-add local --command /absolute/bin/node --arg /absolute/path/to/audited-server.mjs --arg=--someflag --cwd /absolute/path/to/server-workdir --env 'SERVICE_REGION=${SERVICE_REGION}'

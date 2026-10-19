@@ -4,6 +4,8 @@
 
 匿名 HTTP/stdio 不需要 OAuth。新增服务必须走[config-add](mcp-configuration.md)，不手工编辑 JSON：静态 API Key/Bearer 用 `--header 'Authorization=Bearer ${MCP_API_TOKEN}'` 环境引用（header 只接受 `${VAR}` 或 `Bearer ${VAR}`），禁止字面秘密；OAuth 用 `--oauth` 标记配置（生成 `auth: "oauth"`），此配置步骤不联网或授权。先确认服务、OS 账号、目标业务账号和最小权限，不因 401 自动登录、改账号或扩大 scope。
 
+若服务要求 URL query 凭据，`config-add` 支持用户批准的完整 HTTP(S) query URL，原样交给 backend；含凭据 URL 只落私有配置，不进 skill/能力索引/示例/回复/日志。原生配置 CLI 的 argv 仍可见，须在获准受控环境处理。此支持不放宽下文 OAuth callback/code/state 的处理规则。
+
 `tools` / `schema` / `call` **不启动 OAuth 或浏览器，不自动安装任何包**。需要授权就暂停业务请求，确认用户许可，再单独 `auth SERVER`；不调用原生 CLI 绕过，不抽取/维护第二套 AT/RT。
 
 ## 2. 固定无浏览器授权与版本门槛
@@ -36,7 +38,7 @@ auth 成功、发现成功、新进程持久性、真实过期刷新是独立验
 
 不自动打开浏览器时，授权 URL 仅通过私有终端/受控通道交给用户，保持原 auth 进程存活并遵循实际版本的回调流程。若浏览器和客户端在不同机器，浏览器中的 localhost 指浏览器所在机器；先核对 redirect URI 和实际 loopback 端口，由管理员经许可安排与该回调合同匹配的私有连接，结束后关闭，不公开 callback 端口。本入口不提供远程回调转发器，也不承诺此部署一定可完成授权。
 
-不承诺自动 code 回传，不重放旧 code，不把 callback URL 交给模型。**含 code/state、PKCE verifier、access/refresh token 的 URL、日志或 JSON 不进入聊天、argv、skill 或示例。** 授权 URL 本身也可能敏感，不适合公开。
+不承诺自动 code 回传，不重放旧 code，不把 callback URL 交给模型。**本节 OAuth 流程中，含 code/state、PKCE verifier、access/refresh token 的 URL、日志或 JSON 不进入聊天、argv、skill 或示例。** 授权 URL 本身也可能敏感，不适合公开。
 
 本入口不是通用 callback 校验器，不能把其他客户端的安全结论套给底层依赖，也不因产品或入口命名变化宣称 OAuth 已验收。真实授权前核对版本、回调、账号、redirect 和 scope，见[官方来源](sources.md)。
 

@@ -62,7 +62,7 @@ python3 /actual/skill/scripts/pmcp.py servers
 python3 /actual/skill/scripts/pmcp.py doctor
 ```
 
-`init` 无需 runtime，生成固定空配置且不覆盖已有内容、不导入旧状态。**Agent 新增服务必须用 `config-add`，不能手工编辑 JSON**；包括 dry-run 在内都需显式 init、已安装运行时和 Node。同名拒绝，无 replace/remove；未支持高级字段时暂停协调。包装器锁内用私有临时 JSON 调用原生 config add，补 ephemeral/cwd，验证 imports 和现有条目、校验后原子发布；不联网/MCP/启动配置的 stdio/OAuth。env/header 值仅环境引用，command/args 禁止秘密，URL 禁止 userinfo/query/fragment，完整选项见[MCP 配置](mcp-configuration.md)。其余业务操作要求有效配置与安装记录；`meta-*` 不受此要求影响，不读取或创建账号状态。`version` 的 JSON 为 `{"backend":{"package":"mcporter","version":"实际安装版本"},"node":"实际 Node 可执行文件路径"}`；`doctor` 同样通过 `backend: {package, version}` 标识依赖，并以 `nodeVersion` 报告实际 Node 版本。离线检查不是联网、授权或业务成功的证明。
+`init` 无需 runtime，生成固定空配置且不覆盖已有内容、不导入旧状态。**Agent 新增服务必须用 `config-add`，不能手工编辑 JSON**；包括 dry-run 在内都需显式 init、已安装运行时和 Node。同名拒绝，无 replace/remove；未支持高级字段时暂停协调。包装器锁内用私有临时 JSON 调用原生 config add，补 ephemeral/cwd，验证 imports 和现有条目、校验后原子发布；不联网/MCP/启动配置的 stdio/OAuth。env/header 值仅环境引用，command/args 禁止秘密，完整 HTTP(S) URL 支持批准的 token/其他 query 并原样交给 backend，仍拒绝 userinfo/fragment/空白/反斜杠和无效协议/host/port；含凭据 URL 仅落私有配置、不进 skill/能力索引/示例/回复/日志，原生 CLI 的 argv 仍可见。完整选项见[MCP 配置](mcp-configuration.md)。其余业务操作要求有效配置与安装记录；`meta-*` 不受此要求影响，不读取或创建账号状态。`version` 的 JSON 为 `{"backend":{"package":"mcporter","version":"实际安装版本"},"node":"实际 Node 可执行文件路径"}`；`doctor` 同样通过 `backend: {package, version}` 标识依赖，并以 `nodeVersion` 报告实际 Node 版本。离线检查不是联网、授权或业务成功的证明。
 
 配置根 key 仅 `mcpServers` / `imports`，imports 明确为 []，每个服务显式 lifecycle ephemeral；所有业务命令（包括 auth）先校验，不自动改写配置。配置业务 env 不得覆盖隔离/控制变量。不传旧 `--` 分隔符、原生 JSON 开关、@session 或 connect 参数。
 

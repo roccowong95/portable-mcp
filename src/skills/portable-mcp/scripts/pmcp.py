@@ -326,9 +326,9 @@ def config_add_options(args):
             fail("Invalid MCP URL")
         if (url.scheme not in ("https", "http") or not url.hostname or
                 url.username is not None or url.password is not None or
-                "?" in args.url or "#" in args.url or "\\" in args.url or
+                "#" in args.url or "\\" in args.url or
                 any(ord(char) <= 32 or ord(char) == 127 for char in args.url)):
-            fail("MCP URL must be HTTP(S) without userinfo, query, fragment or whitespace; never pass secrets in URLs")
+            fail("MCP URL must be HTTP(S) without userinfo, fragment, backslashes or whitespace")
         if args.arg or args.cwd or args.env:
             fail("args, cwd and env are supported only for stdio")
     else:
@@ -402,8 +402,8 @@ def config_add(args, state, config, data, node, env):
         if staged.stat().st_size > MAX_CONFIG:
             fail("Generated config exceeds safety limit")
         generated = json.loads(staged.read_text(encoding="utf-8"), object_pairs_hook=config_unique)
-        # Fail closed for backend shape changes; no imports, secrets or defaults
-        # from the backend-generated document are accepted into canonical config.
+        # Fail closed for backend shape changes; only the exact approved target
+        # is accepted, without additional imports, fields or implicit defaults.
         if (not isinstance(generated, dict) or generated.get("imports") != [] or
                 set(generated) != {"mcpServers", "imports"} or
                 generated.get("mcpServers") != {args.server: target}):

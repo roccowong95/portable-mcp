@@ -69,8 +69,8 @@ if (Object.keys(before.mcpServers).length || before.imports.length) {
 }
 await fs.writeFile(argv[1], JSON.stringify({mcpServers:{[argv[4]]:target}, imports:[]}));
 // Noise must stay suppressed by execute(quiet=True), never become JSON output.
-console.log('native fixture output, not wrapper JSON');
-console.error('native fixture diagnostic');
+console.log('native fixture output, not wrapper JSON', argv[6]);
+console.error('native fixture diagnostic', argv[6]);
 '''
 
 DRIVER = r'''
@@ -188,6 +188,34 @@ class ProcessPipelineTests(unittest.TestCase):
                 self.assertEqual(json.loads(call.stdout)['structuredContent'], {'afterAdd': True})
                 self.assertEqual(self.receipt.read_text().splitlines(), ['{"afterAdd":true}'])
                 self.receipt.unlink()  # Verified receipt in this test's temporary root.
+
+    def test_query_url_native_add_preserves_exact_value_and_keeps_output_quiet(self):
+        url = 'https://example.invalid/mcp?token=EXAMPLE_ONLY%2B%2F%3D&scope=read&scope=write&empty='
+        for version in ('0.9.0', '0.15.0'):
+            with self.subTest(version=version):
+                config = self.provision(version)
+                before = config.read_bytes()
+                info = config.stat()
+                preview = self.run_entry(version, 'config-add', 'query', '--url', url, '--dry-run')
+                self.assertEqual(preview.returncode, 0, preview.stderr)
+                self.assertFalse(json.loads(preview.stdout)['written'])
+                self.assertEqual(config.read_bytes(), before)
+                self.assertEqual(config.stat().st_ino, info.st_ino)
+                added = self.run_entry(version, 'config-add', 'query', '--url', url)
+                self.assertEqual(added.returncode, 0, added.stderr)
+                self.assertTrue(json.loads(added.stdout)['written'])
+                self.assertEqual(json.loads(config.read_text(encoding='utf-8'))['mcpServers'], {
+                    'fixture': {'command': 'never-spawn', 'lifecycle': 'ephemeral'},
+                    'query': {'baseUrl': url, 'lifecycle': 'ephemeral'},
+                })
+                for result in (preview, added):
+                    self.assertEqual(result.stderr, '')
+                    self.assertNotIn(url, result.stdout)
+                    self.assertNotIn('EXAMPLE_ONLY', result.stdout)
+                    self.assertFalse(json.loads(result.stdout)['connected'])
+                self.assertEqual(list(config.parent.glob('.pmcp-add-*')), [])
+                self.assertFalse(self.receipt.exists())
+                self.assertFalse((self.root / 'account/.pmcp/home/.mcporter').exists())
 
     def test_entry_to_node_pipeline_and_input_types(self):
         for version in ('0.9.0', '0.15.0'):

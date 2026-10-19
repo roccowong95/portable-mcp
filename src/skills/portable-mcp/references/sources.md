@@ -24,7 +24,7 @@ portable-mcp 是插件与 `python3 <skill-root>/scripts/pmcp.py` 稳定入口的
 
 - 原生 CLI 在 0.9 与 0.15 间差异显著。本入口不是透传器，仅提供 [SKILL 命令表](../SKILL.md)；不向原生 CLI 盲试参数。
 - 发现/调用走 runtime 适配，不使用原生 call 的拼写纠正/自动重试；普通调用不自动 OAuth。`auth` / `logout` 仅在用户明确操作时使用受限原生流程。
-- Agent 新增配置必须用 `config-add`，而非手改 JSON。需 init、已安装 runtime 与 Node（包括 dry-run）；同名拒绝，无 replace/remove、persist/scope/copy-from/native 透传。不支持的高级字段暂停协调。header 仅 `${VAR}` / `Bearer ${VAR}`，env 仅 `${VAR}` 引用；command/args 禁止秘密、URL 禁止 userinfo/query/fragment；只做本地配置，不联网/MCP/启动配置的 stdio/OAuth，详见[命令合同](mcp-configuration.md)。
+- Agent 新增配置必须用 `config-add`，而非手改 JSON。需 init、已安装 runtime 与 Node（包括 dry-run）；同名拒绝，无 replace/remove、persist/scope/copy-from/native 透传。不支持的高级字段暂停协调。header 仅 `${VAR}` / `Bearer ${VAR}`，env 仅 `${VAR}` 引用；command/args 禁止秘密；完整 HTTP(S) URL 允许批准的 token/其他 query，原样交给 backend，仍拒绝 userinfo/fragment/空白/反斜杠和无效协议/host/port。含凭据 URL 只落私有配置，不进 skill/能力索引/示例/回复/日志；原生 CLI 的 argv 仍可见；只做本地配置，不联网/MCP/启动配置的 stdio/OAuth，详见[命令合同](mcp-configuration.md)。
 - auth 固定不自动打开浏览器，只支持已核实 >=0.15；旧版失败关闭，无浏览器选项或旧风险接受开关。旧版已有合法 token 的普通操作仍可，不表示能在本入口重新授权；不把新能力猜测移植到 0.9。
 - 唯一配置固定在真实 OS home 下 `.pmcp/config/mcp.json`（POSIX pwd / Windows 系统 profile），不采用环境 HOME/USERPROFILE。不导入/迁移/复制旧状态或凭据，旧 `.portable-mcp` 保持原样；新部署须显式 init、经批准重新配置。运行时暂仍在 `<skill-root>/scripts/.runtime/mcporter/`，本次不移动，不宣称全部内部文件名已整理；内部隔离路径不是用户选项。
 - 安装成功不保证未来版本 API 不变；不支持的 API/配置应失败关闭，先审阅版本合同，不擅自升级 Node、补丁、绕过引擎或放开参数透传。

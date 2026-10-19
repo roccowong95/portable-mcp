@@ -47,7 +47,7 @@ python3 /actual/skill/scripts/pmcp.py call docs ACTUAL_TOOL_NAME <<'JSON'
 JSON
 ```
 
-**Agent 配置以 `config-add` 为主流程，不手改 JSON。** 它需显式 init、已安装 runtime 和 Node；支持 HTTP URL 或 stdio command（二选一）、重复 `--arg`（flag 用 `--arg=--someflag`）、仅 stdio 的已存在绝对 `--cwd`、`--oauth`、重复 `--header` / `--env` 和 `--dry-run`。env/header 值只能引用环境变量，header 仅接受 `${VAR}` 或 `Bearer ${VAR}`，禁止字面秘密；URL 禁止 userinfo/query/fragment，command 非空，command/args 仅放公开字符串、无控制字符且不能放秘密。单引号保护例如 `'Authorization=Bearer ${MCP_API_TOKEN}'`，避免 shell 提前展开。同名服务拒绝，无 replace/remove、persist/scope/copy-from 或 native 透传；高级字段未支持时暂停协调，不盲目手改。详见[MCP 配置](skills/portable-mcp/references/mcp-configuration.md)。
+**Agent 配置以 `config-add` 为主流程，不手改 JSON。** 它需显式 init、已安装 runtime 和 Node；支持 HTTP URL 或 stdio command（二选一）、重复 `--arg`（flag 用 `--arg=--someflag`）、仅 stdio 的已存在绝对 `--cwd`、`--oauth`、重复 `--header` / `--env` 和 `--dry-run`。env/header 值只能引用环境变量，header 仅接受 `${VAR}` 或 `Bearer ${VAR}`，禁止字面秘密；支持用户批准的完整 HTTP(S) URL（含 token/其他 query），原样交给 backend；仍拒绝 userinfo/fragment/空白/反斜杠和无效协议/host/port。含凭据 URL 只落私有配置，不进 skill、能力索引、示例、回复或日志；原生配置 CLI 的 argv 仍可见，不因环境可信宣称无泄露风险。command 非空，command/args 仅放公开字符串、无控制字符且不能放秘密。单引号保护例如 `'Authorization=Bearer ${MCP_API_TOKEN}'`，避免 shell 提前展开。同名服务拒绝，无 replace/remove、persist/scope/copy-from 或 native 透传；高级字段未支持时暂停协调，不盲目手改。详见[MCP 配置](skills/portable-mcp/references/mcp-configuration.md)。
 
 包装器在 profile 锁内对私有临时 JSON 执行原生 `mcporter config add`，补 ephemeral/cwd，验证 `imports: []` 及现有条目不变、校验后原子发布。配置过程不联网、不连接 MCP、不启动配置的 stdio 程序、不执行 OAuth；dry-run 不发布正式配置。原生命令在 0.9/0.15 已存在，但旧版直接写入不安全，不能绕过包装器。
 

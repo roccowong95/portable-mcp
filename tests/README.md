@@ -35,8 +35,12 @@ stdio options, environment-only placeholders (including `Bearer ${VAR}` headers)
 explicit ephemeral lifecycle, preserved sibling fields/cwd, init requirement,
 no same-name overwrite, atomic replacement, failed replacement/native generation,
 malformed/duplicate output, external modification detection, dry-run preservation
-and staging cleanup. Invalid input and isolation overrides must fail before
-runtime discovery. These semantic cases run on Windows too, with only the Windows
+and staging cleanup. Approved query URLs (including placeholder token values,
+encoded/repeated/empty parameters and a trailing `?`) are forwarded and saved
+verbatim; dry-run and native failure leave canonical configuration unchanged.
+The process fixture deliberately echoes the placeholder URL from native stdout
+and stderr to verify that quiet execution does not expose it in entry output.
+Invalid input and isolation overrides must fail before runtime discovery. These semantic cases run on Windows too, with only the Windows
 ACL inspector mocked; they are **not Windows ACL-policy evidence**. Existing
 POSIX permission/account-home and real process-pipeline suites skip on Windows.
 

@@ -13,7 +13,7 @@
 | 新部署找不到配置/授权 | 新固定状态为真实 home `.pmcp`，配置为 `config/mcp.json`。显式 init 后用 config-add 按批准的定义重新配置；旧 `.portable-mcp` 不触碰，不导入/迁移/复制旧状态或凭据 |
 | config-add 缺少前提 | 包括 dry-run 在内都须先 init，并具备已安装 runtime 与 Node；不自动安装，缺少 runtime 先获许可 |
 | config-add 同名拒绝 | 当前只有新增，没有 replace/remove；暂停协调，不手改 JSON、改名或 native CLI 绕过 |
-| config-add 参数被拒绝 | URL 禁止 userinfo/query/fragment；env/header 值只用环境引用，header 只接受 ${VAR} 或 Bearer ${VAR}；command 非空，command/args 仅公开字符串、无控制字符、禁止秘密。flag 用 --arg=--someflag，cwd 仅 stdio 且须已存在绝对目录 |
+| config-add 参数被拒绝 | 完整 HTTP(S) URL 允许批准的 token/其他 query 并原样交给 backend；仍拒绝 userinfo/fragment/空白/反斜杠和无效协议/host/port；env/header 值只用环境引用，header 只接受 ${VAR} 或 Bearer ${VAR}；command 非空，command/args 仅公开字符串、无控制字符、禁止秘密。flag 用 --arg=--someflag，cwd 仅 stdio 且须已存在绝对目录 |
 | 需要高级字段/persist/scope/copy-from | 当前不支持；暂停协调，不盲目手改 JSON 或透传原生参数 |
 | 配置被拒绝 | 严格 JSON，根 key 仅 mcpServers/imports，imports 为 []；每个服务显式 ephemeral，无 refresh/tokenCacheDir。新增用 config-add，示例 JSON 仅为格式参考 |
 | Profile is busy | 固定账号 profile 正在使用，锁内部最多等 30 秒；不换目录/账号、复制凭据或改环境绕过 |
@@ -32,7 +32,7 @@
 
 业务/安装入口不提供状态路径、Node/npm、registry、版本、超时或浏览器模式选择，也不接受部署环境覆盖。`pmcp.py meta-*` 无需 runtime、Node 或 init，不访问账号状态或 MCP，只维护本 skill description；它的本地索引写入锁与错误合同见[能力索引](capability-index.md)。配置唯一位置为真实 OS home 下 `.pmcp/config/mcp.json`；运行时暂仍为 `<skill-root>/scripts/.runtime/mcporter/`，不宣称全部内部文件名已整理。config-add 在 profile 锁内对私有临时 JSON 调用原生 config add，补 ephemeral/cwd、验证 imports 与现有条目后原子发布；它不联网/MCP/启动配置的 stdio/OAuth。内部目录不是用户选项，不通过直接 native CLI、手工覆盖或复制 token 绕过。
 
-失败可能报告 `PMCP_ENTRY_FAILED` 或结构化 bridge 代码；读取脱敏诊断，不把 token、callback URL、完整配置/日志贴进对话。
+失败可能报告 `PMCP_ENTRY_FAILED` 或结构化 bridge 代码；读取脱敏诊断，不把 token、callback URL、完整配置/日志贴进对话。含凭据的 query URL 只落私有配置，不进 skill/能力索引/示例/回复/日志；原生配置 CLI 的 argv 仍可见，须在获准受控环境处理。
 
 ## 不提供的能力
 

@@ -281,6 +281,44 @@ class ConfigAddTests(unittest.TestCase):
             "baseUrl": "https://example.invalid/mcp", "auth": "oauth", "lifecycle": "ephemeral",
             "headers": {"Authorization": "Bearer ${ACCESS_TOKEN}", "X-API-Key": "${API_KEY}"}}}})
 
+    def test_query_urls_are_forwarded_and_saved_verbatim_without_output(self):
+        urls = ("https://example.invalid/mcp?token=EXAMPLE_ONLY",
+                "https://example.invalid/mcp?token=a%2Bb%2F%3D&scope=read&scope=write&empty=",
+                "http://localhost:1234/mcp?label=%E4%B8%AD%E6%96%87&flag",
+                "https://example.invalid/mcp?")
+        for index, url in enumerate(urls):
+            with self.subTest(url=url):
+                server = "query" + str(index)
+                result = self.invoke(server, "--url", url)
+                self.assertEqual(self.native_calls[-1][7:], ["--url", url])
+                self.assertEqual(entry.read_config(self.config)["mcpServers"][server],
+                                 {"baseUrl": url, "lifecycle": "ephemeral"})
+                self.assertNotIn(url, json.dumps(result))
+                self.assertEqual(set(entry.read_config(self.config)["mcpServers"]),
+                                 {"query" + str(i) for i in range(index + 1)})
+
+    def test_query_url_dry_run_preserves_config_and_does_not_echo_url(self):
+        url = "https://example.invalid/mcp?token=EXAMPLE_ONLY&param=a%26b"
+        before = self.snapshot()
+        result = self.invoke("preview", "--url", url, "--dry-run")
+        self.assertEqual(self.native_calls[-1][7:], ["--url", url])
+        self.assertEqual(self.snapshot(), before)
+        self.assertTrue(result["dryRun"])
+        self.assertFalse(result["written"])
+        self.assertNotIn(url, json.dumps(result))
+
+    def test_query_url_native_failure_does_not_echo_url_or_modify_config(self):
+        url = "https://example.invalid/mcp?token=EXAMPLE_ONLY"
+        before = self.snapshot()
+        def failed(*args, **kwargs):
+            self.native(*args, **kwargs)
+            return 17
+        with self.assertRaisesRegex(RuntimeError, "Native config add failed") as error:
+            self.invoke("preview", "--url", url, native=failed)
+        self.assertNotIn(url, str(error.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
     def test_stdio_args_cwd_and_env_are_merged_without_forwarding(self):
         self.invoke("local", "--command", "never-spawn", "--arg=--config", "--arg", "child.json",
                     "--arg=--root", "--arg", "a path with spaces", "--arg", "",
@@ -436,7 +474,6 @@ class ConfigAddTests(unittest.TestCase):
     def test_invalid_urls_fail_before_runtime(self):
         for url in ("ftp://example.invalid/mcp", "example.invalid", "https:///missing",
                     "https://user@example.invalid/mcp", "https://user:secret@example.invalid/mcp",
-                    "https://example.invalid/mcp?token=secret", "https://example.invalid/mcp?",
                     "https://example.invalid/mcp#fragment", "https://example.invalid/mcp#",
                     "https://example.invalid:bad/mcp", "https://example.invalid:99999/mcp",
                     "https://example.invalid/a b", "https://example.invalid/\n", "https://example.invalid/\\bad"):

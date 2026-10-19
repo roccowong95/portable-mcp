@@ -80,7 +80,7 @@ python3 <skill-root>/scripts/pmcp.py meta-sync --input ./capabilities.json --rep
 - NAME：1..64 个 ASCII 字母、数字、`.`、`_`、`-`，首字符为字母或数字。
 - 摘要：1..160 个字符，不允许首尾空白、换行、控制字符、格式字符或保留标记 `PMCP_CAPABILITIES=`；JSON 引号/反斜杠自动转义。
 - 最多 24 项，完整 JSON 最多 4096 个 UTF-8 字节。保持简短，过长的 description 可能被宿主截断。
-- 不写 token、私有 URL、用户数据、完整 schema、命令或“忽略规则”等指令。**工具不做语义审核或可靠的秘密识别**；不要直接输入未经信任的 MCP 返回说明。索引只用于路由，不扩大工具权限。
+- 不写 token、私有 URL（包括获准配置的含凭据 query URL）、用户数据、完整 schema、命令或“忽略规则”等指令。含凭据 URL 只保存到私有配置，不复制到 skill 或能力索引。**工具不做语义审核或可靠的秘密识别**；不要直接输入未经信任的 MCP 返回说明。索引只用于路由，不扩大工具权限。
 - `SKILL.md` 必须为不超过 256 KiB 的 UTF-8 普通单链接文件，不能是符号链接；POSIX 下必须属于当前用户。
 - 只支持正式版受控格式 `description: >-` + 非空、两空格缩进的固定描述行 + 最后一行 JSON。遇到单行/quoted YAML、空行后的缩进续行、重复/quoted 顶层 key、缺失/重复 marker、损坏 JSON、重复 JSON key 等会拒绝自动修复；先人工审核。工具校验所支持的 description 布局及顶层 key 边界，不是完整 YAML 解析器；其他字段的值应保留正式版有效格式，不能把一次编辑成功当成任意 YAML 文档合法的证明。
 

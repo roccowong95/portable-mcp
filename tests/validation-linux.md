@@ -157,3 +157,21 @@ cd /root/.openclaw/workspace-task/skills/portable-mcp && ls scripts/ && python3 
 2. `/root/workspace/portable-mcp-real-add-fixture-negcp_0t`：从同步源码导入 pmcp.py，仅在测试驱动中 patch home/runtime/安装锁到隔离 fixture 与既有只读依赖；执行 init、dry-run、HTTP 环境 header、新增 stdio 的 args/cwd/env，验证新路径、imports[]、ephemeral、参数与引用原样保留及无遗留暂存目录。未新增任何生产可用的路径覆盖或测试开关；这不是原始部署/Amoo 入口验收，也不证明安装锁集成。
 
 真实包探针的 MCP endpoint 为 `.invalid` 占位符，stdio command 为 never-spawn fixture；只运行配置 CLI，不启动目标服务、不执行 MCP/OAuth/刷新或真实业务。未覆盖实际插件、改动实际配置/凭据或升级 Node。真实 mcporter 0.15 配置 CLI 未实跑（仅源码核实和 fake API 回归）；新代码尚未通过用户发布后的 Amoo 集成验收。运行时仍在 skill-local `.runtime/mcporter`，本次仅先调整私有配置/状态位置，不宣称已完成全部运行时文件名整理。
+
+## 允许完整 query URL（2026-10-20，Asia/Shanghai）
+
+基线 `7dd372f` 加本次修改。按用户明确要求，移除 `config-add` 对 URL 查询参数的额外禁止，允许已批准的 `?token=...` 及其他 query，完整字符串原样传给原生配置 CLI 并保存；保留协议/host/port、userinfo、fragment、反斜杠和控制/空白字符校验。文档更新为支持 query URL，真实凭据不进入公开 skill 或能力索引；原生 CLI argv 可见性如实注明。
+
+双跳 SSH 先只读核对 uid、PATH、两套既有 Node 与部署安装记录（0.9.0 / v22.23.3），不读线上配置/vault。当前源码和三份回归同步到独立目录 `/root/workspace/portable-mcp-verify-query-8667h9gg`，测试仅使用临时数据与 fake 公共后端 API：
+
+| 环境 | Python unittest | bridge |
+| --- | --- | --- |
+| Linux，既有 Node v22.23.3 | **59 passed，0 skipped**，15.125 秒 | **35 passed，0 skipped** |
+| Linux，既有 Node v24.21.0 | **59 passed，0 skipped**，15.259 秒 | **35 passed，0 skipped** |
+| 本机 Windows | **40 passed，19 skipped**，7.518 秒 | 本轮未重跑 |
+
+新增 4 项测试覆盖 query 原样传递/保存、百分号编码、重复/空参数、空 query、dry-run 字节/inode 保留、原生失败不覆盖及暂存清理。真实 Python→Node fake CLI 还故意向 stdout/stderr 输出占位 URL，验证入口 quiet 模式不回显该地址；两个 API 版本分支均覆盖。未连接 MCP、启动配置的 stdio、授权或创建 vault。
+
+另用**已安装**真实 mcporter 0.9.0 和既有 Node v22.23.3，在 `/root/workspace/` 的临时私有 HOME/XDG/config 中执行原生 `config add`：普通占位 token query、百分号编码/重复/空参数、尾随 `?` 共 3 种 URL 均 exit0 且保存值与输入完全相同；临时目录自动清理，不连接目标服务。这是配置 CLI 兼容证据，不是实际端点、真实 0.15、OAuth 或 Amoo 新版本部署验收。
+
+本轮不下载/安装/更新第三方运行时、不升级 Node，不改实际插件或真实配置/凭据；没有使用真实 token。源码提交和 push 不等于部署发布。
