@@ -48,6 +48,31 @@ export async function createRuntime() {
 }
 '''
 
+FAKE_CLI = r'''
+import fs from 'node:fs/promises';
+// A deliberately finite native-add contract: never load a transport or spawn a
+// command, and reject every wrapper-only flag accidentally forwarded to native.
+const argv = process.argv.slice(2);
+if (argv.length !== 7 && argv.length !== 9) throw Error('unexpected native argv');
+if (argv[0] !== '--config' || argv[2] !== 'config' || argv[3] !== 'add') {
+  throw Error('unexpected native operation');
+}
+if (!['--url', '--command'].includes(argv[5])) throw Error('unexpected target');
+if (argv.length === 9 && (argv[7] !== '--auth' || argv[8] !== 'oauth')) {
+  throw Error('unexpected auth');
+}
+const target = {[argv[5] === '--url' ? 'baseUrl' : 'command']: argv[6]};
+if (argv.length === 9) target.auth = 'oauth';
+const before = JSON.parse(await fs.readFile(argv[1], 'utf8'));
+if (Object.keys(before.mcpServers).length || before.imports.length) {
+  throw Error('native add received canonical siblings');
+}
+await fs.writeFile(argv[1], JSON.stringify({mcpServers:{[argv[4]]:target}, imports:[]}));
+// Noise must stay suppressed by execute(quiet=True), never become JSON output.
+console.log('native fixture output, not wrapper JSON');
+console.error('native fixture diagnostic');
+'''
+
 DRIVER = r'''
 import importlib.util, json, pathlib, sys
 from unittest.mock import patch
@@ -86,6 +111,7 @@ class ProcessPipelineTests(unittest.TestCase):
         self.package = self.root / 'runtime/node_modules/mcporter'
         (self.package / 'dist').mkdir(parents=True)
         (self.package / 'dist/index.js').write_text(FAKE_API, encoding='utf-8')
+        (self.package / 'dist/cli.js').write_text(FAKE_CLI, encoding='utf-8')
         self.driver = self.root / 'driver.py'
         self.driver.write_text(DRIVER, encoding='utf-8')
         self.receipt = self.root / 'receipt.jsonl'
@@ -103,7 +129,7 @@ class ProcessPipelineTests(unittest.TestCase):
         result = self.run_entry(version, 'init')
         self.assertEqual(result.returncode, 0, result.stderr)
         config = Path(json.loads(result.stdout)['config'])
-        self.assertEqual(config, self.root / 'account/.portable-mcp/config/mcporter.json')
+        self.assertEqual(config, self.root / 'account/.pmcp/config/mcp.json')
         config.write_text(json.dumps({'imports':[], 'mcpServers':{
             'fixture':{'command':'never-spawn', 'lifecycle':'ephemeral'},
         }}), encoding='utf-8')
@@ -115,6 +141,53 @@ class ProcessPipelineTests(unittest.TestCase):
                               input=json.dumps(payload, ensure_ascii=False) if payload is not None else '',
                               capture_output=True, text=True, encoding='utf-8',
                               env=self.env, timeout=15)
+
+    def test_native_add_http_and_stdio_then_ordinary_pipeline_without_spawning(self):
+        for version in ('0.9.0', '0.15.0'):
+            with self.subTest(version=version):
+                config = self.provision(version)
+                # Reset only this test's isolated config, not real account state.
+                config.write_text('{"imports":[],"mcpServers":{}}', encoding='utf-8')
+                before = config.read_bytes()
+                preview = self.run_entry(version, 'config-add', 'preview', '--command',
+                                         'must-never-be-spawned', '--dry-run')
+                self.assertEqual(preview.returncode, 0, preview.stderr)
+                self.assertFalse(json.loads(preview.stdout)['written'])
+                self.assertEqual(config.read_bytes(), before)
+                web = self.run_entry(version, 'config-add', 'web', '--url',
+                                     'https://example.invalid/mcp', '--oauth', '--header',
+                                     'Authorization=Bearer ${FIXTURE_TOKEN}')
+                self.assertEqual(web.returncode, 0, web.stderr)
+                self.assertEqual(web.stderr, '')
+                self.assertFalse(json.loads(web.stdout)['connected'])
+                local = self.run_entry(version, 'config-add', 'local', '--command',
+                                       'must-never-be-spawned', '--arg=--config', '--arg',
+                                       'child.json', '--arg=--root', '--arg', 'child-root',
+                                       '--cwd', str(self.root), '--env', 'TOKEN=${FIXTURE_TOKEN}')
+                self.assertEqual(local.returncode, 0, local.stderr)
+                self.assertEqual(local.stderr, '')
+                self.assertTrue(json.loads(local.stdout)['written'])
+                data = json.loads(config.read_text(encoding='utf-8'))
+                self.assertEqual(data, {'imports': [], 'mcpServers': {
+                    'web': {'baseUrl': 'https://example.invalid/mcp', 'auth': 'oauth',
+                            'headers': {'Authorization': 'Bearer ${FIXTURE_TOKEN}'}, 'lifecycle': 'ephemeral'},
+                    'local': {'command': 'must-never-be-spawned', 'args': ['--config', 'child.json', '--root', 'child-root'],
+                              'cwd': str(self.root), 'env': {'TOKEN': '${FIXTURE_TOKEN}'}, 'lifecycle': 'ephemeral'}}})
+                self.assertFalse(self.receipt.exists())
+                self.assertEqual(list(config.parent.glob('.pmcp-add-*')), [])
+                self.assertFalse((self.root / 'account/.pmcp/home/.mcporter').exists())
+                servers = self.run_entry(version, 'servers')
+                self.assertEqual(servers.returncode, 0, servers.stderr)
+                self.assertEqual(json.loads(servers.stdout)['servers'], ['local', 'web'])
+                tools = self.run_entry(version, 'tools', 'local')
+                self.assertEqual(tools.returncode, 0, tools.stderr)
+                self.assertEqual(json.loads(tools.stdout)['tools'][0]['name'], 'echo_fixture')
+                self.assertFalse(self.receipt.exists())
+                call = self.run_entry(version, 'call', 'local', 'echo_fixture', payload={'afterAdd': True})
+                self.assertEqual(call.returncode, 0, call.stderr)
+                self.assertEqual(json.loads(call.stdout)['structuredContent'], {'afterAdd': True})
+                self.assertEqual(self.receipt.read_text().splitlines(), ['{"afterAdd":true}'])
+                self.receipt.unlink()  # Verified receipt in this test's temporary root.
 
     def test_entry_to_node_pipeline_and_input_types(self):
         for version in ('0.9.0', '0.15.0'):
@@ -153,7 +226,7 @@ class ProcessPipelineTests(unittest.TestCase):
                 self.assertEqual(json.loads(invalid.stdout)['error']['code'], 'INVALID_INPUT')
                 self.assertEqual(len(self.receipt.read_text().splitlines()), 2)
                 self.receipt.unlink()  # Only this fixture's receipt; temp root above is known.
-                self.assertFalse((self.root / 'account/.portable-mcp/home/.mcporter').exists())
+                self.assertFalse((self.root / 'account/.pmcp/home/.mcporter').exists())
 
 
 class CapabilityIndexTests(unittest.TestCase):
@@ -181,6 +254,7 @@ class CapabilityIndexTests(unittest.TestCase):
                                 cwd=self.root, env=self.env, capture_output=True,
                                 text=True, encoding='utf-8', timeout=10)
         self.assertFalse((self.scripts / '.runtime').exists())
+        self.assertFalse((self.root / '.pmcp').exists())
         self.assertFalse((self.root / '.portable-mcp').exists())
         self.assertFalse((self.root / 'unused-home').exists())
         self.assertEqual(sorted(p.name for p in self.scripts.iterdir()),

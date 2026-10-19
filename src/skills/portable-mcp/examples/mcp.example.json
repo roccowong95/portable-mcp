@@ -21,7 +21,7 @@
       "command": "/absolute/bin/node",
       "args": ["/absolute/path/to/audited-server.mjs"],
       "cwd": "/absolute/path/to/server-workdir",
-      "env": {"SERVICE_REGION": "test"}
+      "env": {"SERVICE_REGION": "${SERVICE_REGION}"}
     }
   },
   "imports": []

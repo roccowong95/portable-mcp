@@ -1,6 +1,6 @@
 # 故障排查与固定策略
 
-业务入口始终为 `python3 <skill-root>/scripts/pmcp.py`，显式安装器为 `python3 <skill-root>/scripts/install_runtime.py`；`<skill-root>` 替换为实际 skill 安装目录。内部依赖 `mcporter`，包名、版本错误和兼容状态路径如实保留，不通过改名消除依赖或权限限制。
+业务入口始终为 `python3 <skill-root>/scripts/pmcp.py`，显式安装器为 `python3 <skill-root>/scripts/install_runtime.py`；`<skill-root>` 替换为实际 skill 安装目录。内部依赖 `mcporter`，包名、版本错误及保留的内部运行时/vault 名称如实保留，不通过改名消除依赖或权限限制。
 
 | 现象 | 先做什么 |
 |---|---|
@@ -10,7 +10,12 @@
 | 淘宝镜像不可达 | 固定 `https://registry.npmmirror.com/`，这是第三方镜像，不是 npm 官方源。报告原始错误，不静默 fallback 官方源，不读 npm 配置切源，不暴露 registry 或环境覆盖，不绕过 TLS |
 | --check 未显示新候选 | 已有安装默认离线复用；明确 --update --check 才重新选择。不会安装/写运行时，但可能读淘宝镜像元数据 |
 | 有 stage/backup 遗留 | 不删未知目录；核对确切绝对路径、无人使用及用户许可后处理，保留可回退副本 |
-| 配置被拒绝 | 严格 JSON，根 key 仅 mcpServers/imports，imports 为 []；每个服务显式 ephemeral，无 refresh/tokenCacheDir |
+| 新部署找不到配置/授权 | 新固定状态为真实 home `.pmcp`，配置为 `config/mcp.json`。显式 init 后用 config-add 按批准的定义重新配置；旧 `.portable-mcp` 不触碰，不导入/迁移/复制旧状态或凭据 |
+| config-add 缺少前提 | 包括 dry-run 在内都须先 init，并具备已安装 runtime 与 Node；不自动安装，缺少 runtime 先获许可 |
+| config-add 同名拒绝 | 当前只有新增，没有 replace/remove；暂停协调，不手改 JSON、改名或 native CLI 绕过 |
+| config-add 参数被拒绝 | URL 禁止 userinfo/query/fragment；env/header 值只用环境引用，header 只接受 ${VAR} 或 Bearer ${VAR}；command 非空，command/args 仅公开字符串、无控制字符、禁止秘密。flag 用 --arg=--someflag，cwd 仅 stdio 且须已存在绝对目录 |
+| 需要高级字段/persist/scope/copy-from | 当前不支持；暂停协调，不盲目手改 JSON 或透传原生参数 |
+| 配置被拒绝 | 严格 JSON，根 key 仅 mcpServers/imports，imports 为 []；每个服务显式 ephemeral，无 refresh/tokenCacheDir。新增用 config-add，示例 JSON 仅为格式参考 |
 | Profile is busy | 固定账号 profile 正在使用，锁内部最多等 30 秒；不换目录/账号、复制凭据或改环境绕过 |
 | 新命令进程看不到授权 | 比较机器、OS 账号、skill 入口、运行时版本。状态来自真实 OS home（POSIX pwd / Windows 系统 profile），环境 HOME/USERPROFILE 不切换身份；旧自选目录不导入 |
 | 旧 vault JSON 损坏 | 停止，保留受保护副本；非原子写入中断可能损坏。入口不自动重置/修复，恢复/删除由用户决定；重新授权仍需现代门槛 |
@@ -25,7 +30,7 @@
 | MCP isError=true / 退出 2 | 有 MCP 结果时核对部分效果；用法错误也可能退出 2，结合 stdout/stderr 区分 |
 | Windows 权限失败 | 管理员本机预设受保护 ACL，入口只检查，不擅自改 ACL/提权，不宣称完整平台验收 |
 
-业务/安装入口不提供状态路径、Node/npm、registry、版本、超时或浏览器模式选择，也不接受部署环境覆盖。`pmcp.py meta-*` 无需 runtime、Node 或 init，不访问账号状态或 MCP，只维护本 skill description；它的本地索引写入锁与错误合同见[能力索引](capability-index.md)。配置位置为真实 OS home 下 `.portable-mcp/config/mcporter.json`；内部目录属于实现细节，不让用户挑选。不通过直接 native CLI 或复制 token 绕过。
+业务/安装入口不提供状态路径、Node/npm、registry、版本、超时或浏览器模式选择，也不接受部署环境覆盖。`pmcp.py meta-*` 无需 runtime、Node 或 init，不访问账号状态或 MCP，只维护本 skill description；它的本地索引写入锁与错误合同见[能力索引](capability-index.md)。配置唯一位置为真实 OS home 下 `.pmcp/config/mcp.json`；运行时暂仍为 `<skill-root>/scripts/.runtime/mcporter/`，不宣称全部内部文件名已整理。config-add 在 profile 锁内对私有临时 JSON 调用原生 config add，补 ephemeral/cwd、验证 imports 与现有条目后原子发布；它不联网/MCP/启动配置的 stdio/OAuth。内部目录不是用户选项，不通过直接 native CLI、手工覆盖或复制 token 绕过。
 
 失败可能报告 `PMCP_ENTRY_FAILED` 或结构化 bridge 代码；读取脱敏诊断，不把 token、callback URL、完整配置/日志贴进对话。
 

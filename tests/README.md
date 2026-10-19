@@ -25,12 +25,28 @@ Python coverage: fixed account-home state, ambient control stripping, explicit
 configuration imports/lifecycle, unsafe auth/cache/environment rejection,
 absolute stdio cwd, POSIX modes/links, corrupt-vault preservation, profile lock,
 removed deployment flags, offline install reuse, real npm semver selection and
-Node-identity checks. Bridge coverage is defined by the named Node test cases.
+Node-identity checks. State expectations use the real OS account home under
+`.pmcp/config/mcp.json`; legacy `.portable-mcp` state is not automatically migrated.
+Bridge coverage is defined by the named Node test cases.
+
+`test_entry.py` also tests `config-add` with mocked runtime discovery and a native
+staged-output fixture: exact target/auth-only argv, quiet execution, HTTP/OAuth and
+stdio options, environment-only placeholders (including `Bearer ${VAR}` headers),
+explicit ephemeral lifecycle, preserved sibling fields/cwd, init requirement,
+no same-name overwrite, atomic replacement, failed replacement/native generation,
+malformed/duplicate output, external modification detection, dry-run preservation
+and staging cleanup. Invalid input and isolation overrides must fail before
+runtime discovery. These semantic cases run on Windows too, with only the Windows
+ACL inspector mocked; they are **not Windows ACL-policy evidence**. Existing
+POSIX permission/account-home and real process-pipeline suites skip on Windows.
 
 `test_pipeline.py` additionally checks the real `pmcp.py` → Node bridge process
 boundary against fake public backend exports for the 0.9 and 0.15 API branches:
 init, version, servers, doctor, tools, schema, successful/error raw calls, exact-name
-rejection and JSON type/Unicode preservation. OS-account home and runtime paths
+rejection and JSON type/Unicode preservation. Its fake `dist/cli.js` implements
+native config add through the actual Python → Node subprocess boundary, checking
+HTTP/stdio adds and dry-run without server spawns, connection/call receipts or a
+credential vault; ordinary discovery and calls then work with the added server. OS-account home and runtime paths
 are patched only in its temporary test driver, never through a production switch.
 The capability-index cases call `pmcp.py meta-*` on a copied skill without Node,
 runtime, init or account-state access. They cover validation, dry-run/merge/replace,

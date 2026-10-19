@@ -2,7 +2,7 @@
 
 ## 1. 普通业务调用不登录
 
-匿名 HTTP/stdio 不需要 OAuth；静态 API Key/Bearer 通过受控业务环境与 headers 提供；OAuth 服务明确 `auth: "oauth"`。先确认服务、OS 账号、目标业务账号和最小权限，不因 401 自动登录、改账号或扩大 scope。
+匿名 HTTP/stdio 不需要 OAuth。新增服务必须走[config-add](mcp-configuration.md)，不手工编辑 JSON：静态 API Key/Bearer 用 `--header 'Authorization=Bearer ${MCP_API_TOKEN}'` 环境引用（header 只接受 `${VAR}` 或 `Bearer ${VAR}`），禁止字面秘密；OAuth 用 `--oauth` 标记配置（生成 `auth: "oauth"`），此配置步骤不联网或授权。先确认服务、OS 账号、目标业务账号和最小权限，不因 401 自动登录、改账号或扩大 scope。
 
 `tools` / `schema` / `call` **不启动 OAuth 或浏览器，不自动安装任何包**。需要授权就暂停业务请求，确认用户许可，再单独 `auth SERVER`；不调用原生 CLI 绕过，不抽取/维护第二套 AT/RT。
 
@@ -42,12 +42,14 @@ auth 成功、发现成功、新进程持久性、真实过期刷新是独立验
 
 ## 5. 固定状态、vault 与锁
 
-状态根固定在 OS 账号真实 home 的 `.portable-mcp`；POSIX 取 pwd 用户目录，Windows 取系统 profile，不采用环境 HOME/USERPROFILE，不迁移旧自选目录。内部再设置私有 HOME/USERPROFILE、四个 XDG 目录和 daemon 路径。配置固定 `config/mcporter.json`，根 key 仅 mcpServers/imports，imports 为 []，每个服务显式 ephemeral；auth 也先校验，不读其他客户端、不改写配置，无 tokenCacheDir。
+状态根固定在 OS 账号真实 home 的 `.pmcp`；POSIX 取 pwd 用户目录，Windows 取系统 profile，不采用环境 HOME/USERPROFILE。唯一配置固定 `config/mcp.json`，根 key 仅 mcpServers/imports，imports 为 []，每个服务显式 ephemeral；auth 也先校验，不读其他客户端、不改写配置，无 tokenCacheDir。内部再设置私有 HOME/USERPROFILE、四个 XDG 目录和 daemon 路径。运行时仍在 `<skill-root>/scripts/.runtime/mcporter/`，内部 vault 名称也如实保留。
+
+不导入、迁移或复制旧状态/凭据；旧 `.portable-mcp` 保持原样，新部署须显式 init、按批准的定义通过 config-add 重新配置。新状态下没有 token 不意味着允许复制旧 vault；授权另获确认，不承诺真实 OAuth 或刷新已验收。
 
 用于解释版本差异的内部 vault 位置，不是可选择路径：
 
-- 旧 0.9 等：`<真实home>/.portable-mcp/home/.mcporter/credentials.json`。
-- 已核实现代 0.15：`<真实home>/.portable-mcp/data/mcporter/credentials.json`。
+- 旧 0.9 等：`<真实home>/.pmcp/home/.mcporter/credentials.json`。
+- 已核实现代 0.15：`<真实home>/.pmcp/data/mcporter/credentials.json`。
 
 旧 vault 非原子写入，崩溃/中断可损坏 JSON；入口失败关闭，不自动重置、修复或伪造凭据。保留受保护副本，恢复/删除由用户决定；重新授权仍受现代门槛约束。
 
@@ -55,7 +57,7 @@ vault **明文不加密**，不提交、打包、打印或传模型。POSIX 私�
 
 固定 profile 的业务状态命令由 OS 锁串行化（`pmcp.py meta-*` 不访问账号状态，只使用 skill 内的索引写入锁），不直接 native CLI，不让其他客户端并发复用；锁仅约束合作入口，不为绕过 busy 换目录/账号或复制 token。
 
-## 6. logout、迁移与撤权
+## 6. logout、旧状态与撤权
 
 ```sh
 python3 /actual/skill/scripts/pmcp.py logout oauth-service
@@ -63,4 +65,4 @@ python3 /actual/skill/scripts/pmcp.py logout oauth-service
 
 logout 是经确认的本地认证清理，范围随版本变化，不等于撤销远端 grant，不保证运行任务取消；匿名/静态 key 的 logout 不替你撤销 API Key。服务端撤权在账号设置中按实际流程另获确认。
 
-旧客户端/keyring 凭据、旧自选状态目录不自动导入，跨机器/跨版本不默认复制 token，见[私有存储与迁移](file-storage.md)。当前无后台会话/keepalive，不提供 close @session；关闭连接不是删除凭据或撤权。
+旧客户端/keyring 凭据、旧自选目录和 `.portable-mcp` 状态均不导入、迁移或复制，见[私有存储与旧状态边界](file-storage.md)。当前无后台会话/keepalive，不提供 close @session；关闭连接不是删除凭据或撤权。

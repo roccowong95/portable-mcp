@@ -1,6 +1,6 @@
 # 工具发现、schema 与精确调用
 
-业务使用[固定入口](installation.md) `python3 <skill-root>/scripts/pmcp.py`；`<skill-root>` 替换为实际 skill 安装目录，不是全局命令。配置固定在 OS 账号真实 home 的 `.portable-mcp/config/mcporter.json`，内部文件名为兼容保留，不通过环境 HOME/USERPROFILE 或参数切换。服务 `docs` 必须已获准配置，工具名示例是占位符。没有 `@session`、connect 或 native CLI 透传。
+业务使用[固定入口](installation.md) `python3 <skill-root>/scripts/pmcp.py`；`<skill-root>` 替换为实际 skill 安装目录，不是全局命令。配置固定在 OS 账号真实 home 的 `.pmcp/config/mcp.json`，不通过环境 HOME/USERPROFILE 或参数切换。先显式 init，并用[config-add](mcp-configuration.md)新增服务，不手改 JSON；旧 `.portable-mcp` 保持原样，不导入/迁移/复制旧状态或凭据。服务 `docs` 必须已获准配置，工具名示例是占位符。没有 `@session`、connect 或 native CLI 透传。
 
 ## 1. 选择服务，渐进发现
 

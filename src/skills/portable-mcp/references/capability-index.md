@@ -68,7 +68,7 @@ python3 <skill-root>/scripts/pmcp.py meta-sync --input ./capabilities.json --rep
 
 ## 何时更新
 
-1. 用户批准新增服务，管理员完成必要配置/授权并验证实际能力。
+1. 用户批准新增服务后，先显式 init，再通过 `config-add` 完成获准配置（不用手工编辑 JSON），必要授权另获许可，验证实际能力。配置固定在真实 OS home 的 `.pmcp/config/mcp.json`；不导入/迁移/复制旧状态或凭据，旧 `.portable-mcp` 保持原样。config-add 需要 runtime 与 Node，包括 dry-run；未支持的高级字段暂停协调，详见[MCP 配置](mcp-configuration.md)。
 2. 根据已确认的用途，拟定一句简短的**服务级能力摘要**，由用户或管理员确认后运行 `meta-add`；多个服务可写进一份清单，用 `meta-sync` 一次同步。
 3. 新会话/宿主重新扫描 skill 后检查触发效果；当前会话可能仍缓存旧 description，CLI 不重启或刷新宿主。
 4. 服务不再提供时用 `meta-rm` 避免误路由。实际关闭会话、删除配置、撤销授权是另外的操作，不由本工具执行。

@@ -19,6 +19,7 @@ import sys
 import time
 import tempfile
 import unicodedata
+from urllib.parse import urlsplit
 
 SCRIPTS = Path(__file__).resolve().parent
 RUNTIME = SCRIPTS / ".runtime" / "mcporter"
@@ -114,7 +115,7 @@ def account_home():
 
 
 def prepare_state():
-    path = account_home() / ".portable-mcp"
+    path = account_home() / ".pmcp"
     no_links(path)
     state = path.resolve()
     skill = SCRIPTS.parent
@@ -172,18 +173,24 @@ def profile_lock(state, timeout):
         stream.close()
 
 
+def config_unique(pairs):
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            fail("Duplicate configuration keys are not allowed")
+        obj[key] = value
+    return obj
+
+
 def read_config(path):
     private_path(path)
     if path.stat().st_size > MAX_CONFIG:
         fail("Configuration exceeds 1 MiB")
-    def unique(pairs):
-        obj = {}
-        for key, value in pairs:
-            if key in obj:
-                fail("Duplicate configuration keys are not allowed")
-            obj[key] = value
-        return obj
-    data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
+    data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=config_unique)
+    return validate_config(data)
+
+
+def validate_config(data):
     if (not isinstance(data, dict) or data.get("imports") != [] or
             set(data) - {"imports", "mcpServers"}):
         fail('Configuration supports only mcpServers and explicit "imports": []')
@@ -244,7 +251,7 @@ def child_environment(state, node):
                 "XDG_CONFIG_HOME": str(state / "config"), "XDG_DATA_HOME": str(state / "data"),
                 "XDG_CACHE_HOME": str(state / "cache"), "XDG_STATE_HOME": str(state / "state"),
                 "MCPORTER_DAEMON_DIR": str(state / "broker"),
-                "MCPORTER_CONFIG": str(state / "config" / "mcporter.json"),
+                "MCPORTER_CONFIG": str(state / "config" / "mcp.json"),
                 "MCPORTER_LOG_LEVEL": "error", "MCPORTER_NO_FORCE_EXIT": "1",
                 "MCPORTER_DISABLE_KEEPALIVE": "*"})
     return env
@@ -273,9 +280,11 @@ def runtime():
     return node, pkg["version"]
 
 
-def execute(argv, env, deadline):
-    """Inherit private input/output; never log tokens or replay a failed call."""
+def execute(argv, env, deadline, quiet=False):
+    """Never log tokens or replay; config generation suppresses third-party output."""
     kwargs = {"env": env}
+    if quiet:
+        kwargs.update(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if os.name == "posix":
         kwargs["start_new_session"] = True
     process = subprocess.Popen(argv, **kwargs)
@@ -303,6 +312,124 @@ def execute(argv, env, deadline):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         process.wait()
         fail("Request interrupted or timed out; outcome may be unknown. It was NOT replayed")
+
+
+def config_add_options(args):
+    """Validate a finite add interface; never forward arbitrary native CLI flags."""
+    if not NAME.fullmatch(args.server):
+        fail("Invalid exact server name")
+    if args.url:
+        try:
+            url = urlsplit(args.url)
+            port = url.port
+        except ValueError:
+            fail("Invalid MCP URL")
+        if (url.scheme not in ("https", "http") or not url.hostname or
+                url.username is not None or url.password is not None or
+                "?" in args.url or "#" in args.url or "\\" in args.url or
+                any(ord(char) <= 32 or ord(char) == 127 for char in args.url)):
+            fail("MCP URL must be HTTP(S) without userinfo, query, fragment or whitespace; never pass secrets in URLs")
+        if args.arg or args.cwd or args.env:
+            fail("args, cwd and env are supported only for stdio")
+    else:
+        if (not args.executable or args.executable.startswith("-") or
+                any(ord(char) < 32 or ord(char) == 127 for char in args.executable)):
+            fail("stdio command must be a nonempty executable, not a shell command or flag")
+        if args.header or args.oauth:
+            fail("headers and OAuth are supported only for HTTP")
+    extra = {}
+    if args.executable:
+        if any(any(ord(char) < 32 or ord(char) == 127 for char in arg) for arg in args.arg):
+            fail("stdio arguments cannot contain control characters")
+        extra["args"] = args.arg
+    if args.cwd:
+        if not Path(args.cwd).is_absolute() or not Path(args.cwd).is_dir():
+            fail("cwd must be an existing absolute stdio directory")
+        extra["cwd"] = args.cwd
+    reference = r"\$\{[A-Za-z_][A-Za-z0-9_]*\}"
+    for field, pairs in (("env", args.env), ("headers", args.header)):
+        values = {}
+        for pair in pairs:
+            key, separator, value = pair.partition("=")
+            pattern = r"[A-Za-z_][A-Za-z0-9_]*" if field == "env" else r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
+            if not separator or not re.fullmatch(pattern, key):
+                fail("env/header requires a valid KEY=environment-reference pair")
+            if key.lower() in {existing.lower() for existing in values}:
+                fail("Duplicate env/header keys are not allowed")
+            allowed_value = reference if field == "env" else r"(?:Bearer )?" + reference
+            if not re.fullmatch(allowed_value, value):
+                fail("env/header values must be environment references, never literal credentials (headers may use Bearer prefix)")
+            values[key] = value
+        if values:
+            extra[field] = values
+    definition = {"baseUrl": args.url} if args.url else {"command": args.executable}
+    definition.update(extra)
+    definition["lifecycle"] = "ephemeral"
+    if args.oauth:
+        definition["auth"] = "oauth"
+    validate_config({"mcpServers": {args.server: definition}, "imports": []})
+    return extra
+
+
+def config_add(args, state, config, data, node, env):
+    """Use native add only to generate one entry, then validate and atomically publish.
+
+    Native parsers may consume child --config/--root args or strip existing cwd.
+    Therefore never pass child args or the original config through native add.
+    """
+    extra = config_add_options(args)
+    original = config.read_bytes()
+    identity = config.stat()
+    # runtime() may take time: merge from a fresh snapshot, never the caller's
+    # earlier parsed data. The pre-publish identity/byte check covers this read too.
+    data = read_config(config)
+    if args.server in data["mcpServers"]:
+        fail("Server already exists; config-add never replaces an existing identity")
+    # Dedicated private directory confines even a native lock/temp-file writer.
+    with tempfile.TemporaryDirectory(prefix=".pmcp-add-", dir=str(config.parent)) as folder:
+        staged = Path(folder) / "mcp.json"
+        staged.write_text('{"mcpServers":{},"imports":[]}\n', encoding="utf-8")
+        cli = [node, str(PACKAGE / "dist" / "cli.js"), "--config", str(staged),
+               "config", "add", args.server]
+        target = {"baseUrl": args.url} if args.url else {"command": args.executable}
+        cli += ["--url", args.url] if args.url else ["--command", args.executable]
+        if args.oauth:
+            cli += ["--auth", "oauth"]
+            target["auth"] = "oauth"
+        if execute(cli, env, OPERATION_TIMEOUT_MS / 1000 + CLEANUP_GRACE_SECONDS, quiet=True):
+            fail("Native config add failed; existing configuration was not changed")
+        private_path(staged)
+        if staged.stat().st_size > MAX_CONFIG:
+            fail("Generated config exceeds safety limit")
+        generated = json.loads(staged.read_text(encoding="utf-8"), object_pairs_hook=config_unique)
+        # Fail closed for backend shape changes; no imports, secrets or defaults
+        # from the backend-generated document are accepted into canonical config.
+        if (not isinstance(generated, dict) or generated.get("imports") != [] or
+                set(generated) != {"mcpServers", "imports"} or
+                generated.get("mcpServers") != {args.server: target}):
+            fail("Native config add produced an unexpected entry; existing configuration was not changed")
+        target.update(extra)
+        target["lifecycle"] = "ephemeral"
+        merged = {**data, "mcpServers": {**data["mcpServers"], args.server: target}}
+        with staged.open("w", encoding="utf-8") as stream:
+            json.dump(merged, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        read_config(staged)
+        check_tree(state)
+        private_path(config)
+        current = config.stat()
+        if ((current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size) !=
+                (identity.st_dev, identity.st_ino, identity.st_mtime_ns, identity.st_size) or
+                config.read_bytes() != original):
+            fail("Configuration changed outside the profile lock; no overwrite was performed")
+        if not args.dry_run:
+            os.replace(staged, config)
+        print(json.dumps({"server": args.server, "config": str(config),
+                          "dryRun": args.dry_run, "written": not args.dry_run,
+                          "connected": False}))
+    return 0
 
 
 # Metadata stays skill-local and uses a separate writer lock, not account state.
@@ -580,6 +707,17 @@ def parser():
     sub = p.add_subparsers(dest="command", required=True)
     for op in ("init", "version", "servers", "doctor"):
         sub.add_parser(op)
+    add = sub.add_parser("config-add", help="Safely add one server without editing JSON or connecting")
+    add.add_argument("server")
+    target = add.add_mutually_exclusive_group(required=True)
+    target.add_argument("--url")
+    target.add_argument("--command", dest="executable")
+    add.add_argument("--arg", action="append", default=[], help="stdio argument; use --arg=--flag for leading dashes")
+    add.add_argument("--cwd", help="Existing absolute stdio directory")
+    add.add_argument("--oauth", action="store_true", help="Configure HTTP OAuth, never start authorization")
+    add.add_argument("--env", action="append", default=[], help="stdio KEY=${ENV_VAR} (no literal secrets)")
+    add.add_argument("--header", action="append", default=[], help="HTTP KEY=${ENV_VAR} or KEY=Bearer ${ENV_VAR}")
+    add.add_argument("--dry-run", action="store_true")
     tools = sub.add_parser("tools")
     tools.add_argument("server")
     tools.add_argument("--query", help="Literal case-insensitive name/description substring")
@@ -610,7 +748,7 @@ def main():
             print("PMCP_META_FAILED: " + message, file=sys.stderr)
             return 1
     state = prepare_state()
-    config = state / "config" / "mcporter.json"
+    config = state / "config" / "mcp.json"
     with profile_lock(state, LOCK_TIMEOUT_SECONDS), (nullcontext() if args.command == "init" else install_lock(LOCK_TIMEOUT_SECONDS)):
         if args.command == "init":
             if not config.exists():
@@ -624,11 +762,17 @@ def main():
         check_vault_json(state)
         data = read_config(config)
         server = getattr(args, "server", None)
-        if server and server not in data["mcpServers"]:
-            fail("Unknown exact server name; configure it explicitly before connecting")
+        if args.command == "config-add":
+            config_add_options(args)
+            if server in data["mcpServers"]:
+                fail("Server already exists; config-add never replaces an existing identity")
+        elif server and server not in data["mcpServers"]:
+            fail("Unknown exact server name; use config-add before connecting")
         node, version = runtime()
         # The same discovered Node resolves stdio server shebangs consistently.
         env = child_environment(state, node)
+        if args.command == "config-add":
+            return config_add(args, state, config, data, node, env)
         if args.command == "version":
             print(json.dumps({"backend": {"package": "mcporter", "version": version}, "node": node}))
             return 0

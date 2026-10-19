@@ -35,7 +35,7 @@ class EntrySafetyTests(unittest.TestCase):
         self.addCleanup(self.patch_home.stop)
         # ACL policy is tested separately on Windows; this suite targets Linux.
         self.state = entry.prepare_state()
-        self.config = self.state / "config" / "mcporter.json"
+        self.config = self.state / "config" / "mcp.json"
 
     def write_config(self, entries=None, **extras):
         data = {"imports": [], "mcpServers": entries or {}}
@@ -51,7 +51,7 @@ class EntrySafetyTests(unittest.TestCase):
 
     def test_state_uses_account_home_not_overrides(self):
         with patch.dict(os.environ, {"HOME": "/untrusted", "PMCP_STATE_DIR": "/untrusted", "USERPROFILE": "/untrusted"}):
-            self.assertEqual(entry.prepare_state(), self.home / ".portable-mcp")
+            self.assertEqual(entry.prepare_state(), self.home / ".pmcp")
         self.assertFalse((self.home / ".mcporter").exists())
         self.assertEqual(set(p.name for p in self.state.iterdir()), {"home", "config", "data", "cache", "state", "broker"})
 
@@ -186,6 +186,314 @@ class EntrySafetyTests(unittest.TestCase):
             for check in (False, True):
                 with self.subTest(check=check):
                     self.assertEqual(installer.main_locked(type("Args", (), {"update": False, "check": check})()), 0)
+
+
+class ConfigAddTests(unittest.TestCase):
+    """Native add is a local staged generator, never an MCP connection.
+
+    Only Windows ACL inspection is mocked: this suite tests config semantics on
+    both platforms, not Windows's independently enforced ACL security policy.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="pmcp-add-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name).resolve()
+        if os.name == "posix":
+            previous_umask = os.umask(0o077)
+            self.addCleanup(os.umask, previous_umask)
+            self.home.chmod(0o700)
+        for name, value in (("account_home", self.home), ("windows_acl", None)):
+            mocked = patch.object(entry, name, return_value=value)
+            mocked.start()
+            self.addCleanup(mocked.stop)
+        self.state = entry.prepare_state()
+        self.config = self.state / "config" / "mcp.json"
+        self.config.write_text('{"mcpServers":{},"imports":[]}\n', encoding="utf-8")
+        self.config.chmod(0o600)
+        self.native_calls = []
+        self.staged_paths = []
+        self.node = str(self.home / "node")
+
+    def snapshot(self):
+        info = self.config.stat()
+        return self.config.read_bytes(), info.st_ino, info.st_mtime_ns, info.st_mode
+
+    def native(self, argv, env, deadline, *, quiet=False):
+        self.assertTrue(quiet)
+        self.assertEqual(argv[:3], [self.node, str(entry.PACKAGE / "dist" / "cli.js"), "--config"])
+        staged = Path(argv[3])
+        self.staged_paths.append(staged)
+        self.assertNotEqual(staged, self.config)
+        self.assertEqual(staged.parent.parent, self.config.parent)
+        self.assertEqual(staged.name, "mcp.json")
+        self.assertEqual(json.loads(staged.read_text(encoding="utf-8")),
+                         {"mcpServers": {}, "imports": []})
+        self.assertEqual(argv[4:6], ["config", "add"])
+        self.assertIn(argv[7], ("--url", "--command"))
+        self.assertEqual(argv[9:], ["--auth", "oauth"] if len(argv) > 9 else [])
+        self.assertEqual(deadline, entry.OPERATION_TIMEOUT_MS / 1000 + entry.CLEANUP_GRACE_SECONDS)
+        self.assertEqual(env["MCPORTER_CONFIG"], str(self.config))
+        self.assertEqual(env["HOME"], str(self.state / "home"))
+        target = {"baseUrl" if argv[7] == "--url" else "command": argv[8]}
+        if len(argv) > 9:
+            target["auth"] = "oauth"
+        staged.write_text(json.dumps({"mcpServers": {argv[6]: target}, "imports": []}), encoding="utf-8")
+        self.native_calls.append(list(argv))
+        return 0
+
+    def invoke(self, *args, native=None):
+        with patch.object(entry, "runtime", return_value=(self.node, "0.15.0")) as runtime, \
+                patch.object(entry, "install_lock", return_value=entry.nullcontext()), \
+                patch.object(entry, "execute", side_effect=native or self.native) as execute, \
+                patch.object(sys, "argv", ["pmcp.py", "config-add", *args]), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            result = entry.main()
+        self.assertEqual(result, 0)
+        runtime.assert_called_once_with()
+        execute.assert_called_once()
+        for staged in self.staged_paths:
+            self.assertFalse(staged.parent.exists(), "Native staging directory leaked")
+        return json.loads(output.getvalue())
+
+    def assert_rejected_before_runtime(self, *args):
+        before = self.snapshot()
+        with patch.object(entry, "runtime", side_effect=AssertionError("invalid add reached runtime")) as runtime, \
+                patch.object(entry, "install_lock", return_value=entry.nullcontext()), \
+                patch.object(entry, "execute") as execute, \
+                patch.object(sys, "argv", ["pmcp.py", "config-add", *args]), \
+                self.assertRaises((RuntimeError, ValueError)):
+            entry.main()
+        runtime.assert_not_called()
+        execute.assert_not_called()
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_http_oauth_and_headers_are_merged_without_forwarding(self):
+        result = self.invoke("web", "--url", "https://example.invalid/mcp", "--oauth",
+                             "--header", "Authorization=Bearer ${ACCESS_TOKEN}",
+                             "--header", "X-API-Key=${API_KEY}")
+        self.assertEqual(result, {"server": "web", "config": str(self.config),
+                                  "dryRun": False, "written": True, "connected": False})
+        self.assertEqual(self.native_calls[0][4:], ["config", "add", "web", "--url",
+                         "https://example.invalid/mcp", "--auth", "oauth"])
+        self.assertEqual(entry.read_config(self.config), {"imports": [], "mcpServers": {"web": {
+            "baseUrl": "https://example.invalid/mcp", "auth": "oauth", "lifecycle": "ephemeral",
+            "headers": {"Authorization": "Bearer ${ACCESS_TOKEN}", "X-API-Key": "${API_KEY}"}}}})
+
+    def test_stdio_args_cwd_and_env_are_merged_without_forwarding(self):
+        self.invoke("local", "--command", "never-spawn", "--arg=--config", "--arg", "child.json",
+                    "--arg=--root", "--arg", "a path with spaces", "--arg", "",
+                    "--cwd", str(self.home), "--env", "SERVICE_TOKEN=${TOKEN}",
+                    "--env", "OTHER=${OTHER_TOKEN}")
+        self.assertEqual(self.native_calls[0][4:], ["config", "add", "local", "--command", "never-spawn"])
+        self.assertEqual(entry.read_config(self.config)["mcpServers"]["local"], {
+            "command": "never-spawn", "args": ["--config", "child.json", "--root", "a path with spaces", ""],
+            "cwd": str(self.home), "env": {"SERVICE_TOKEN": "${TOKEN}", "OTHER": "${OTHER_TOKEN}"},
+            "lifecycle": "ephemeral"})
+
+    def test_preserves_sibling_cwd_and_unknown_supported_fields(self):
+        sibling = {"command": "never-spawn", "args": ["--config", "own.json"], "cwd": str(self.home),
+                   "lifecycle": {"mode": "ephemeral"}, "description": "中文", "futureField": {"nested": [1, True]}}
+        self.config.write_text(json.dumps({"imports": [], "mcpServers": {"old": sibling}}), encoding="utf-8")
+        self.invoke("new", "--url", "http://localhost:1234/mcp")
+        data = entry.read_config(self.config)
+        self.assertEqual(data["imports"], [])
+        self.assertEqual(data["mcpServers"]["old"], sibling)
+        self.assertEqual(set(data["mcpServers"]), {"old", "new"})
+
+    def test_same_name_never_overwrites_before_runtime(self):
+        self.config.write_text(json.dumps({"imports": [], "mcpServers": {
+            "demo": {"command": "original", "lifecycle": "ephemeral"}}}), encoding="utf-8")
+        self.assert_rejected_before_runtime("demo", "--url", "https://example.invalid/mcp")
+
+    def test_init_is_required_before_native_or_runtime(self):
+        self.config.unlink()  # Known temporary canonical fixture only.
+        with patch.object(entry, "runtime") as runtime, patch.object(entry, "execute") as execute, \
+                patch.object(entry, "install_lock", return_value=entry.nullcontext()), \
+                patch.object(sys, "argv", ["pmcp.py", "config-add", "demo", "--command", "never-spawn"]), \
+                self.assertRaises(OSError):
+            entry.main()
+        runtime.assert_not_called()
+        execute.assert_not_called()
+        self.assertFalse(self.config.exists())
+
+    def test_old_state_is_not_automatically_migrated(self):
+        legacy = self.home / ".portable-mcp" / "config"
+        legacy.mkdir(parents=True)
+        old = legacy / "mcporter.json"
+        old.write_bytes(b"old-private-state-not-to-migrate")
+        self.config.unlink()  # Known temporary canonical fixture only.
+        with patch.object(sys, "argv", ["pmcp.py", "init"]), patch("builtins.print"):
+            self.assertEqual(entry.main(), 0)
+        self.assertEqual(entry.read_config(self.config), {"mcpServers": {}, "imports": []})
+        self.assertEqual(old.read_bytes(), b"old-private-state-not-to-migrate")
+        self.assertEqual(self.state, self.home / ".pmcp")
+
+    def test_dry_run_preserves_canonical_bytes_identity_and_cleans_temp(self):
+        before = self.snapshot()
+        result = self.invoke("preview", "--command", "never-spawn", "--dry-run")
+        self.assertEqual(self.snapshot(), before)
+        self.assertTrue(result["dryRun"])
+        self.assertFalse(result["written"])
+        self.assertFalse(result["connected"])
+
+    def test_commit_is_one_atomic_replace_of_validated_staged_document(self):
+        original = self.config.read_bytes()
+        real_replace = os.replace
+        def replace(source, destination):
+            self.assertEqual(Path(destination), self.config)
+            self.assertEqual(self.config.read_bytes(), original)
+            self.assertEqual(entry.read_config(Path(source))["mcpServers"]["demo"]["lifecycle"], "ephemeral")
+            return real_replace(source, destination)
+        with patch.object(entry.os, "replace", side_effect=replace) as commit:
+            self.invoke("demo", "--command", "never-spawn")
+        commit.assert_called_once()
+        if os.name == "posix":
+            self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+
+    def test_replace_failure_leaves_original_unchanged_and_cleans_temp(self):
+        before = self.snapshot()
+        with patch.object(entry.os, "replace", side_effect=OSError("fixture atomic replace failed")), \
+                self.assertRaisesRegex(OSError, "fixture atomic replace failed"):
+            self.invoke("demo", "--command", "never-spawn")
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_nonzero_native_output_never_commits(self):
+        before = self.snapshot()
+        def failed(*args, **kwargs):
+            self.native(*args, **kwargs)
+            return 17
+        with self.assertRaisesRegex(RuntimeError, "Native config add failed"):
+            self.invoke("demo", "--command", "never-spawn", native=failed)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_malformed_or_unexpected_native_output_never_commits(self):
+        bad = ("{broken", "[]", "null", '{"mcpServers":{}}',
+               '{"mcpServers":{},"imports":[]}',
+               '{"mcpServers":{"demo":{"command":"wrong"}},"imports":[]}',
+               '{"mcpServers":{"demo":{"command":"never-spawn","auth":"oauth"}},"imports":[]}',
+               '{"mcpServers":{"demo":{"command":"never-spawn"}},"imports":["cursor"]}',
+               '{"mcpServers":{"demo":{"command":"never-spawn"}},"imports":[],"other":true}',
+               '{"mcpServers":{"demo":{"command":"never-spawn"},"extra":{}},"imports":[]}',
+               '{"mcpServers":{"demo":{"command":"never-spawn"}},"imports":[],"imports":[]}',
+               '{"mcpServers":{"demo":{"command":"wrong","command":"never-spawn"}},"imports":[]}')
+        for raw in bad:
+            with self.subTest(raw=raw):
+                before = self.snapshot()
+                def malformed(*args, **kwargs):
+                    self.native(*args, **kwargs)
+                    self.staged_paths[-1].write_text(raw, encoding="utf-8")
+                    return 0
+                with self.assertRaises((RuntimeError, ValueError)):
+                    self.invoke("demo", "--command", "never-spawn", native=malformed)
+                self.assertEqual(self.snapshot(), before)
+                self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_config_is_refreshed_after_runtime_before_merging(self):
+        sibling = {"command": "external", "lifecycle": "ephemeral", "cwd": str(self.home)}
+        def runtime_changed():
+            self.config.write_text(json.dumps({"imports": [], "mcpServers": {"external": sibling}}), encoding="utf-8")
+            return self.node, "0.15.0"
+        with patch.object(entry, "runtime", side_effect=runtime_changed), \
+                patch.object(entry, "install_lock", return_value=entry.nullcontext()), \
+                patch.object(entry, "execute", side_effect=self.native), \
+                patch.object(sys, "argv", ["pmcp.py", "config-add", "demo", "--command", "never-spawn"]), \
+                patch("builtins.print"):
+            self.assertEqual(entry.main(), 0)
+        self.assertEqual(entry.read_config(self.config)["mcpServers"]["external"], sibling)
+        self.assertIn("demo", entry.read_config(self.config)["mcpServers"])
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_same_name_added_during_runtime_is_preserved(self):
+        changed = b'{"imports":[],"mcpServers":{"demo":{"command":"external","lifecycle":"ephemeral"}}}'
+        def runtime_changed():
+            self.config.write_bytes(changed)
+            return self.node, "0.15.0"
+        with patch.object(entry, "runtime", side_effect=runtime_changed), \
+                patch.object(entry, "install_lock", return_value=entry.nullcontext()), \
+                patch.object(entry, "execute") as execute, \
+                patch.object(sys, "argv", ["pmcp.py", "config-add", "demo", "--command", "never-spawn"]), \
+                self.assertRaisesRegex(RuntimeError, "already exists"):
+            entry.main()
+        execute.assert_not_called()
+        self.assertEqual(self.config.read_bytes(), changed)
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_external_modification_is_detected_and_not_overwritten(self):
+        changed = b'{"imports":[],"mcpServers":{"external":{"command":"keep","lifecycle":"ephemeral"}}}'
+        def external(*args, **kwargs):
+            self.native(*args, **kwargs)
+            self.config.write_bytes(changed)
+            return 0
+        with self.assertRaisesRegex(RuntimeError, "changed outside the profile lock"):
+            self.invoke("demo", "--command", "never-spawn", native=external)
+        self.assertEqual(self.config.read_bytes(), changed)
+        self.assertEqual(list(self.config.parent.glob(".pmcp-add-*")), [])
+
+    def test_invalid_urls_fail_before_runtime(self):
+        for url in ("ftp://example.invalid/mcp", "example.invalid", "https:///missing",
+                    "https://user@example.invalid/mcp", "https://user:secret@example.invalid/mcp",
+                    "https://example.invalid/mcp?token=secret", "https://example.invalid/mcp?",
+                    "https://example.invalid/mcp#fragment", "https://example.invalid/mcp#",
+                    "https://example.invalid:bad/mcp", "https://example.invalid:99999/mcp",
+                    "https://example.invalid/a b", "https://example.invalid/\n", "https://example.invalid/\\bad"):
+            with self.subTest(url=url):
+                self.assert_rejected_before_runtime("demo", "--url", url)
+
+    def test_transport_invalid_combinations_fail_before_runtime(self):
+        for options in (("--url", "https://example.invalid", "--arg", "child"),
+                        ("--url", "https://example.invalid", "--cwd", str(self.home)),
+                        ("--url", "https://example.invalid", "--env", "TOKEN=${TOKEN}"),
+                        ("--command", "never-spawn", "--oauth"),
+                        ("--command", "never-spawn", "--header", "X-Key=${TOKEN}")):
+            with self.subTest(options=options):
+                self.assert_rejected_before_runtime("demo", *options)
+
+    def test_literal_credentials_and_invalid_reference_pairs_fail_before_runtime(self):
+        cases = (("--env", "TOKEN=literal-secret"), ("--env", "TOKEN=Bearer ${TOKEN}"),
+                 ("--env", "TOKEN=$TOKEN"), ("--env", "TOKEN=${TOKEN}/suffix"),
+                 ("--env", "TOKEN"), ("--env", "bad-key=${TOKEN}"),
+                 ("--header", "Authorization=Bearer literal-secret"), ("--header", "X-Key=literal-secret"),
+                 ("--header", "X-Key=${TOKEN}\r\nInjected: value"), ("--header", "Bad Header=${TOKEN}"))
+        for flag, value in cases:
+            with self.subTest(flag=flag, value=value):
+                target = ["--command", "never-spawn"] if flag == "--env" else ["--url", "https://example.invalid"]
+                self.assert_rejected_before_runtime("demo", *target, flag, value)
+        for flag, target in (("--env", ["--command", "never-spawn"]),
+                             ("--header", ["--url", "https://example.invalid"])):
+            self.assert_rejected_before_runtime("demo", *target, flag, "KEY=${TOKEN}", flag, "key=${OTHER}")
+
+    def test_isolation_environment_overrides_fail_before_runtime(self):
+        for key in ("HOME", "home", "USERPROFILE", "XDG_DATA_HOME", "NODE_OPTIONS", "NPM_CONFIG_REGISTRY",
+                    "MCPORTER_CONFIG", "PMCP_STATE_DIR", "MCPC_HOME_DIR", "PORTABLE_MCP_HOME", "COREPACK_HOME"):
+            with self.subTest(key=key):
+                self.assert_rejected_before_runtime("demo", "--command", "never-spawn", "--env", key + "=${TOKEN}")
+
+    def test_invalid_names_commands_cwd_and_control_characters_fail_before_runtime(self):
+        for name in ("../bad", ".bad", "bad name", "服务"):
+            with self.subTest(name=name):
+                self.assert_rejected_before_runtime(name, "--command", "never-spawn")
+        for options in (("--command", ""), ("--command=--flag",), ("--command", "bad\ncommand"),
+                        ("--command", "never-spawn", "--arg", "bad\nargument"),
+                        ("--command", "never-spawn", "--cwd", "relative"),
+                        ("--command", "never-spawn", "--cwd", str(self.home / "missing"))):
+            with self.subTest(options=options):
+                self.assert_rejected_before_runtime("demo", *options)
+
+    def test_parser_requires_exactly_one_transport_and_rejects_unsupported_flags(self):
+        for options in ((), ("--url", "https://example.invalid", "--command", "never-spawn"),
+                        ("--command", "never-spawn", "--auth", "oauth"),
+                        ("--command", "never-spawn", "--overwrite"),
+                        ("--command", "never-spawn", "--transport", "stdio"),
+                        ("--command", "never-spawn", "--scope", "project"),
+                        ("--command", "never-spawn", "--lifecycle", "keep-alive"),
+                        ("--command", "never-spawn", "--config", "other.json")):
+            with self.subTest(options=options), patch("sys.stderr"), self.assertRaises(SystemExit) as error:
+                entry.parser().parse_args(["config-add", "demo", *options])
+            self.assertEqual(error.exception.code, 2)
 
 
 class MetadataDispatchTests(unittest.TestCase):

@@ -134,3 +134,26 @@ cd /root/.openclaw/workspace-task/skills/portable-mcp && ls scripts/ && python3 
 此外，本机只读 GET 淘宝镜像 `/mcporter/latest` 成功，返回包名 `mcporter`、版本 `0.15.0`、Node engine `>=24`。这只证明该次元数据端点可达，不能代替完整依赖下载/安装或未来可用性。
 
 本轮未安装/更新任何第三方运行时、未升级 Node、未覆盖部署内容、未读写真实账号配置或凭据、未执行 OAuth/真实业务/Amoo 新会话。现有安装默认离线复用；镜像策略变更不会自动重装。最终宿主验收仍遵守用户发布/安装确认后的顺序。
+
+## 新配置路径与受控 config-add（2026-10-20，Asia/Shanghai）
+
+本机修改：固定账号状态根改为真实 OS home 下 `.pmcp`，唯一 MCP 配置为 `config/mcp.json`；`init` 不读取、复制或迁移旧 `.portable-mcp`。添加 `pmcp.py config-add`，由既有原生 `config add` 在私有临时空配置中生成一个服务定义，Python 再补 args/cwd/env/headers、强制 ephemeral，验证 imports/权限/整个候选配置并在 profile 锁内原子提交。拒绝同名覆盖及 native 参数透传，失败保留原配置。
+
+只读 preflight：SSH uid=0，默认 PATH 对应 `/usr/bin/node v24.21.0`、npm 11.19.0；实际已部署 skill 安装记录为 mcporter 0.9.0 / Node v22.23.3，可执行 `/usr/local/node/bin/node`。本次仅读取安装记录的 package/version/nodeVersion/cli，不读真实配置或凭据；未把 SSH 默认 Node 当作 Amoo 的 Node。
+
+当前源码与回归同步到 `/root/workspace/portable-mcp-verify-config-f72x5y5b`；使用各测试子进程局部 PATH 选择既有 Node，不改全局环境。
+
+| 环境 | Python unittest | bridge |
+| --- | --- | --- |
+| Linux，既有 Node v22.23.3 | **55 passed，0 skipped**，13.892 秒 | **35 passed，0 skipped** |
+| Linux，既有 Node v24.21.0 | **55 passed，0 skipped**，13.903 秒 | **35 passed，0 skipped** |
+| 本机 Windows | **37 passed，18 skipped**，6.874 秒 | **35 passed，0 skipped** |
+
+新增 20 项配置回归及 1 项真实 Python→Node fake-native CLI 流程：HTTP/OAuth 标记/header 引用，stdio args/cwd/env 引用，单次原子发布、失败/非法输出/重复 JSON 保留、dry-run 字节与 inode 不变及临时清理、旧目录不迁移、并发修改与晚采样丢更新防护、名字/URL/隔离变量/秘密字面值/透传参数拒绝。Windows 的配置语义测试 mock ACL 检查，不构成 Windows ACL 安全验收。
+
+另直接使用**已安装** mcporter 0.9.0（未下载/安装/更新）做两层真实包验证：
+
+1. `/root/workspace/portable-mcp-native-add-_0_26xyn`：原生 HTTP/stdio `config add` 均 exit0，生成 JSON 的 `baseUrl`/`command` 与 imports 形状符合适配器预期。
+2. `/root/workspace/portable-mcp-real-add-fixture-negcp_0t`：从同步源码导入 pmcp.py，仅在测试驱动中 patch home/runtime/安装锁到隔离 fixture 与既有只读依赖；执行 init、dry-run、HTTP 环境 header、新增 stdio 的 args/cwd/env，验证新路径、imports[]、ephemeral、参数与引用原样保留及无遗留暂存目录。未新增任何生产可用的路径覆盖或测试开关；这不是原始部署/Amoo 入口验收，也不证明安装锁集成。
+
+真实包探针的 MCP endpoint 为 `.invalid` 占位符，stdio command 为 never-spawn fixture；只运行配置 CLI，不启动目标服务、不执行 MCP/OAuth/刷新或真实业务。未覆盖实际插件、改动实际配置/凭据或升级 Node。真实 mcporter 0.15 配置 CLI 未实跑（仅源码核实和 fake API 回归）；新代码尚未通过用户发布后的 Amoo 集成验收。运行时仍在 skill-local `.runtime/mcporter`，本次仅先调整私有配置/状态位置，不宣称已完成全部运行时文件名整理。

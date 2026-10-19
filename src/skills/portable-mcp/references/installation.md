@@ -27,9 +27,9 @@ python3 /actual/skill/scripts/install_runtime.py --update
 
 安装成功后锁定精确版本并复用，不每次追逐最新版。安装器只暴露 `--check`、`--update`。内部记录/lock 用于核对安装，不得手工伪造；`--ignore-scripts` 仅禁止安装生命周期脚本，不证明包安全，也可能令依赖功能不可用，不能为通过安装擅自开脚本或改 lockfile。只读 skill 需管理员在批准的可写副本预装，不擅自提权。
 
-## 3. 固定布局与兼容路径
+## 3. 固定新状态布局与保留的运行时
 
-配置固定在 **OS 账号真实 home 下的 `.portable-mcp/config/mcporter.json`**。POSIX 通过 `pwd.getpwuid` 定位，Windows 通过系统 profile 定位，忽略环境 HOME/USERPROFILE。所有操作保持同一机器、同一 OS 账号；内部目录不让用户选择。
+配置固定在 **OS 账号真实 home 下的 `.pmcp/config/mcp.json`**。POSIX 通过 `pwd.getpwuid` 定位，Windows 通过系统 profile 定位，忽略环境 HOME/USERPROFILE。所有操作保持同一机器、同一 OS 账号；内部目录不让用户选择。
 
 ```text
 <skill-root>/scripts/
@@ -38,8 +38,8 @@ python3 /actual/skill/scripts/install_runtime.py --update
   pmcp.py                   # 统一业务与本地 meta-* 入口，不透传原生 CLI
   mcp_bridge.mjs            # 内部发现/精确调用，禁止自动 OAuth
   .runtime/mcporter/        # 兼容保留：运行时、lock、安装记录，不分发
-<OS账号真实home>/.portable-mcp/
-  config/mcporter.json      # 兼容保留：唯一配置，mcpServers + imports: []
+<OS账号真实home>/.pmcp/
+  config/mcp.json           # 唯一配置，mcpServers + imports: []
   home/                    # 内部 HOME/USERPROFILE
   data/                    # 内部 XDG_DATA_HOME
   cache/                   # 内部 XDG_CACHE_HOME
@@ -48,18 +48,21 @@ python3 /actual/skill/scripts/install_runtime.py --update
   .pmcp.lock               # 全 profile OS 锁
 ```
 
-这些路径用于解释隔离和排错，不是可选部署参数。`.runtime/mcporter`、配置文件及依赖的 vault 路径为兼容保留原名；不因入口整理自动搬迁、删除、导入或复制凭据。内部 HOME/USERPROFILE、XDG config/data/cache/state 与 daemon 环境隔离运行状态，但这些变量不参与真实 home 的状态根定位。stdio 子进程会受私有 HOME 影响，详见[MCP 配置](mcp-configuration.md)。
+这些路径用于解释隔离和排错，不是可选部署参数。状态改用 `.pmcp`，配置改用 `config/mcp.json`；**不自动导入、迁移或复制旧状态/凭据，旧 `.portable-mcp` 保持原样**。新部署须显式 init、经批准重新配置。运行时暂仍为 `scripts/.runtime/mcporter`，上游内部 vault 命名也未改，不宣称完整文件名整理。内部 HOME/USERPROFILE、XDG config/data/cache/state 与 daemon 环境隔离运行状态，但这些变量不参与真实 home 的状态根定位。stdio 子进程会受私有 HOME 影响，详见[MCP 配置](mcp-configuration.md)。
 
 ## 4. 初始化与业务检查
 
 ```sh
 python3 /actual/skill/scripts/pmcp.py init
+# 替换为已批准的端点；.invalid 仅为占位符
+python3 /actual/skill/scripts/pmcp.py config-add docs --url https://mcp.example.invalid/mcp --dry-run
+python3 /actual/skill/scripts/pmcp.py config-add docs --url https://mcp.example.invalid/mcp
 python3 /actual/skill/scripts/pmcp.py version
 python3 /actual/skill/scripts/pmcp.py servers
 python3 /actual/skill/scripts/pmcp.py doctor
 ```
 
-`init` 无需 runtime，生成固定配置且不覆盖已有内容。其余业务操作要求有效配置与安装记录；`meta-*` 不受此要求影响，不读取或创建账号状态。`version` 的 JSON 为 `{"backend":{"package":"mcporter","version":"实际安装版本"},"node":"实际 Node 可执行文件路径"}`；`doctor` 同样通过 `backend: {package, version}` 标识依赖，并以 `nodeVersion` 报告实际 Node 版本。离线检查不是联网、授权或业务成功的证明。
+`init` 无需 runtime，生成固定空配置且不覆盖已有内容、不导入旧状态。**Agent 新增服务必须用 `config-add`，不能手工编辑 JSON**；包括 dry-run 在内都需显式 init、已安装运行时和 Node。同名拒绝，无 replace/remove；未支持高级字段时暂停协调。包装器锁内用私有临时 JSON 调用原生 config add，补 ephemeral/cwd，验证 imports 和现有条目、校验后原子发布；不联网/MCP/启动配置的 stdio/OAuth。env/header 值仅环境引用，command/args 禁止秘密，URL 禁止 userinfo/query/fragment，完整选项见[MCP 配置](mcp-configuration.md)。其余业务操作要求有效配置与安装记录；`meta-*` 不受此要求影响，不读取或创建账号状态。`version` 的 JSON 为 `{"backend":{"package":"mcporter","version":"实际安装版本"},"node":"实际 Node 可执行文件路径"}`；`doctor` 同样通过 `backend: {package, version}` 标识依赖，并以 `nodeVersion` 报告实际 Node 版本。离线检查不是联网、授权或业务成功的证明。
 
 配置根 key 仅 `mcpServers` / `imports`，imports 明确为 []，每个服务显式 lifecycle ephemeral；所有业务命令（包括 auth）先校验，不自动改写配置。配置业务 env 不得覆盖隔离/控制变量。不传旧 `--` 分隔符、原生 JSON 开关、@session 或 connect 参数。
 
@@ -73,4 +76,4 @@ POSIX 新目录 0700、文件 0600，拒绝不私有、错误所有者及链接�
 
 只支持 ephemeral，每个服务必须显式 `"lifecycle": "ephemeral"`。联网业务命令各自创建并关闭连接，meta 命令不连接 MCP；不保留 @session，不启动 keepalive/daemon/serve/generate，不支持跨命令订阅。内部 broker 路径只是防止误用默认命名空间，不表示后台进程功能已启用。
 
-分发仅复制源码，排除运行时、node_modules、安装生成的 lock/cache、私有配置、状态、日志、凭据与部署特有能力索引。更新遗留的 stage/backup 目录，仅在核对确切绝对路径、无人使用及用户许可后处理，不删除未知目录或旧运行时。迁移不带 token，见[私有存储与迁移](file-storage.md)。安装选择、离线检查、宿主集成、真实授权与过期刷新分别验证，不互相替代。
+分发仅复制源码，排除运行时、node_modules、安装生成的 lock/cache、私有配置、状态、日志、凭据与部署特有能力索引。更新遗留的 stage/backup 目录，仅在核对确切绝对路径、无人使用及用户许可后处理，不删除未知目录或旧运行时。不导入/迁移/复制旧状态或 token，见[私有存储与旧状态边界](file-storage.md)。安装选择、离线检查、宿主集成、真实授权与过期刷新分别验证，不互相替代。
