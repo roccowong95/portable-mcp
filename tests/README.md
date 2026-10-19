@@ -17,7 +17,7 @@ Direct SSH technical checks do not require a commit/push or an Amoo session.
 From the synchronized repository root:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_entry.py' -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
 node --test tests/test_bridge.mjs
 ```
 
@@ -26,6 +26,14 @@ configuration imports/lifecycle, unsafe auth/cache/environment rejection,
 absolute stdio cwd, POSIX modes/links, corrupt-vault preservation, profile lock,
 removed deployment flags, offline install reuse, real npm semver selection and
 Node-identity checks. Bridge coverage is defined by the named Node test cases.
+
+`test_pipeline.py` additionally checks the real `pmcp.py` → Node bridge process
+boundary against fake public backend exports for the 0.9 and 0.15 API branches:
+init, version, servers, doctor, tools, schema, successful/error raw calls, exact-name
+rejection and JSON type/Unicode preservation. OS-account home and runtime paths
+are patched only in its temporary test driver, never through a production switch.
+It also exercises the capability-index add/sync/remove lifecycle on a copied skill.
+These tests do not prove that either real backend version or its transport works.
 
 All fixtures are created in OS temporary directories and removed by the tests.
 No test entry point creates the production runtime or authenticates an account.

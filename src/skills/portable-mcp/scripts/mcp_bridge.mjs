@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Private process boundary, public mcporter API. No native CLI calls, guessed
+// Private portable-mcp process boundary, public backend API. No native CLI calls, guessed
 // tool names, retry-on-error, OAuth browser flows, daemon, or module patching.
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -13,9 +13,9 @@ const QUIET_LOGGER = Object.freeze({ debug: noop, info: noop, warn: noop, error:
 const MESSAGES = Object.freeze({
   INVALID_ARGUMENTS: 'Invalid bridge arguments.',
   INVALID_INPUT: 'Call input must be a JSON object.',
-  INVALID_CONFIG: 'The isolated mcporter configuration is invalid or unsupported.',
-  INVALID_PACKAGE: 'The installed mcporter package is unavailable or unsupported.',
-  UNSUPPORTED_RUNTIME: 'The installed mcporter runtime API is unsupported.',
+  INVALID_CONFIG: 'The isolated portable-mcp configuration is invalid or unsupported.',
+  INVALID_PACKAGE: 'The installed runtime package is unavailable or unsupported.',
+  UNSUPPORTED_RUNTIME: 'The installed runtime API is unsupported.',
   UNKNOWN_SERVER: 'The exact configured server name was not found.',
   UNKNOWN_TOOL: 'The exact permitted tool name was not found.',
   UNSUPPORTED_LIFECYCLE: 'Keep-alive is unsupported; configure lifecycle ephemeral explicitly.',
@@ -156,7 +156,7 @@ async function closeLegacyContext(context) {
   }
 }
 
-// Injectable public API seam: callers can supply fake mcporter exports without
+// Injectable public API seam: callers can supply fake backend exports without
 // importing a real package, spawning a server, or changing process streams.
 // Resolves {output, exitCode}; the CLI below is the only JSON/stdout writer.
 export async function executeBridge(api, request, { version, args = {} } = {}) {
@@ -205,7 +205,7 @@ export async function executeBridge(api, request, { version, args = {} } = {}) {
     return {
       output: {
         ok: unsupportedServers.length === 0,
-        mcporterVersion: version,
+        backend: { package: 'mcporter', version },
         nodeVersion: process.version,
         servers,
         features: {

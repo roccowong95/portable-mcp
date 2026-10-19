@@ -98,3 +98,21 @@ cd /root/.openclaw/workspace-task/skills/portable-mcp && ls scripts/ && python3 
 结论：发布后的 skill 发现/读取有会话证据，**原始入口执行及端到端验收仍未通过**，需要宿主侧排查上述 `exec` 的授权关联。新的真实业务/OAuth 验证并未获得额外许可，也未执行。
 
 附：此前 push 网络中断的验证资料提交 `8eb970854c64690f889cd2e9b1e2e3f161b26856`，本次重试得到 `Everything up-to-date`，并通过 `git ls-remote origin refs/heads/main` 确认该 hash 已在远端；这只说明源码同步状态，不等于部署状态。
+
+## portable-mcp 中性入口整理后的回归（2026-10-19）
+
+源码基线为 `94fa596` 加本次未提交改动。四个实现文件改为 `pmcp.py`、`install_runtime.py`、`mcp_bridge.mjs`、`runtime_versions.cjs`；真实 npm 包、安装标记和私有配置/vault 路径保持兼容，不自动迁移凭据。`version` 改用 `backend:{package,version}`；`doctor` 同样用 backend 替代旧 mcporterVersion。
+
+本机开发后经同一双跳 SSH，将 9 个当前文件同步到独立目录 `/root/workspace/portable-mcp-verify-neutral-vyh_2f1x`。使用现有 Node，将 `/usr/local/node/bin` 仅前置于测试子进程 PATH；未改全局 PATH 或替换 Node。结果：
+
+| 验证 | 结果 | 证据范围 |
+| --- | --- | --- |
+| `python3 -m unittest discover -s tests -p 'test_*.py' -v` | **21 passed，0 skipped** | 19 项入口/semver（含新增 init 幂等保留配置、Node 漂移拒绝），加能力索引和 Python→Node 进程合同；使用 mock/temp fixture |
+| `node --test tests/test_bridge.mjs` | **35 passed** | 两个版本分支的 fake 公共 API，精确匹配、原始结果/退出码、分页、关闭与错误边界 |
+| 本机相同两套命令 | Python **4 passed、17 skipped**；bridge **35 passed** | Windows 跳过 Linux 权限、锁及进程合同，不能算 Linux 测试通过 |
+
+进程合同测试覆盖 init→配置→version/servers/doctor→tools→schema→stdin call；数字样字符串、中文/emoji、空串、嵌套对象/数组保型，保留 `_meta` 与 isError；拼错工具和非对象输入均不额外 dispatch。能力索引仅在复制的 skill 上 add/dry-run/sync/remove，最终内容恢复原样。
+
+本次没有下载、安装或更新第三方运行时，没有使用真实账号配置/vault、没有 OAuth 或业务调用。已部署 skill 的 runtime 目录在本次检查时不存在，故**未重跑真实 mcporter smoke**；上文真实 0.9.0 smoke 仅为此前基线的历史结果，不算当前入口验收。没有为弥补此缺口而安装依赖或改动部署内容。
+
+该轮验证不等于真实 mcporter 0.15、HTTP/SSE、OAuth 回调/持久化/刷新、并发刷新、Windows 生产环境或 Amoo 端到端通过。提交与 push 后仍须用户在 Studio 发布/安装并确认，再开始 Amoo 新会话验收。中性命名用于明确产品与后端边界，不作为绕过宿主授权网关的方案。

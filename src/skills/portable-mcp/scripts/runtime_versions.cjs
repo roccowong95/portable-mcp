@@ -14,7 +14,7 @@ function main() {
   const args = process.argv.slice(2);
   const index = args.indexOf('--npm-cli');
   if (index < 0 || !args[index + 1]) {
-    fail('Usage: mcporter_versions.cjs --npm-cli /absolute/npm-cli.js select|check-installed');
+    fail('Usage: runtime_versions.cjs --npm-cli /absolute/npm-cli.js select|check-installed');
   }
   const npmCli = args[index + 1];
   args.splice(index, 2);
@@ -65,7 +65,7 @@ function main() {
   if (args[0] === 'check-installed') {
     pkg = input.package;
     if (!pkg || !eligible(pkg.version, pkg)) {
-      fail('Installed mcporter must be stable, >=0.9.0 and compatible with the actual Node engines range');
+      fail('Installed runtime must be stable, >=0.9.0 and compatible with the actual Node engines range');
     }
   } else {
     if (!input.versions || typeof input.versions !== 'object' || Array.isArray(input.versions)) {
@@ -75,7 +75,7 @@ function main() {
       .filter((version) => eligible(version, input.versions[version]))
       .sort(semver.rcompare);
     if (!versions.length) {
-      fail('No stable non-deprecated mcporter >=0.9.0 supports this Node; Node will not be upgraded');
+      fail('No stable non-deprecated runtime >=0.9.0 supports this Node; Node will not be upgraded');
     }
     pkg = input.versions[versions[0]];
   }
@@ -86,6 +86,6 @@ try {
   main();
 } catch (error) {
   // Errors are data, not instructions; do not print registry-controlled records.
-  process.stderr.write('MCPORTER_VERSION_FAILED: ' + error.message + '\n');
+  process.stderr.write('PMCP_RUNTIME_VERSION_FAILED: ' + error.message + '\n');
   process.exitCode = 1;
 }

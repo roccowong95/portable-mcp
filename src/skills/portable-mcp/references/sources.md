@@ -1,5 +1,7 @@
 # 版本与官方资料
 
+portable-mcp 是插件与 `python3 <skill-root>/scripts/pmcp.py` 稳定入口的名称，内部依赖的 npm 包仍是 **`mcporter`**。本页保留真实包名、版本和官方链接，便于核对实际安装与安全约束。安装器是 `python3 <skill-root>/scripts/install_runtime.py`，内部适配实现为 `mcp_bridge.mjs` / `runtime_versions.cjs`。
+
 本 skill 固定使用现有 PATH Node/npm 与官方 `https://registry.npmjs.org`，不提供版本、registry、工具链或路径选择/环境覆盖。显式安装自动选择稳定、未弃用、`>=0.9.0` 且根包 engines 适配**既有 Node** 的最高版本，再以 npm engine-strict 校验依赖并锁定；不升级 Node，不保证任意 latest 可用。0.9 只是兼容性示例，不是要求安装的目标；根包匹配不是依赖可安装或业务验收证明。
 
 ## 已核实的版本来源
@@ -13,9 +15,9 @@
 | [v0.9.0 runtime.ts](https://github.com/openclaw/mcporter/blob/v0.9.0/src/runtime.ts)、[发布 transport](https://unpkg.com/mcporter@0.9.0/dist/runtime/transport.js) | 旧版非交互路径需要禁止 OAuth 尝试，仅复用缓存 access token，不隐式刷新 |
 | [0.12.0 runtime](https://unpkg.com/mcporter@0.12.0/dist/runtime.js)、[0.13.0 runtime](https://unpkg.com/mcporter@0.13.0/dist/runtime.js)、[v0.15.0 runtime.ts](https://github.com/openclaw/mcporter/blob/v0.15.0/src/runtime.ts) | 0.12 引入公共 disableOAuth；0.13 切换 SDK 分支。现代 listTools 映射丢弃 annotations/title/_meta，不能承诺原始 Tool 元数据完整 |
 | [v0.9.0 OAuth 实现](https://github.com/openclaw/mcporter/blob/v0.9.0/src/oauth.ts)、[JSON 写入](https://github.com/openclaw/mcporter/blob/v0.9.0/src/fs-json.ts) | 旧回调 state 校验接受缺失 state；旧 vault 写入非原子。入口锁不能修复回调校验或崩溃损坏风险 |
-| [v0.15.0 配置说明](https://github.com/openclaw/mcporter/blob/v0.15.0/docs/config.md)、[daemon 说明](https://github.com/openclaw/mcporter/blob/v0.15.0/docs/daemon.md) | 新版本配置/生命周期能力并不向旧版保证；本首版明确只接受 ephemeral，不启动 daemon |
+| [v0.15.0 配置说明](https://github.com/openclaw/mcporter/blob/v0.15.0/docs/config.md)、[daemon 说明](https://github.com/openclaw/mcporter/blob/v0.15.0/docs/daemon.md) | 新版本配置/生命周期能力并不向旧版保证；本入口明确只接受 ephemeral，不启动 daemon |
 
-这些是源码/文档核实，不是已完成真实授权、过期刷新、Windows 或 Amoo 测试的声明。原仓库历史名称可能重定向到官方 [openclaw/mcporter](https://github.com/openclaw/mcporter)；`main` 文档会变化，优先核对精确 tag 与安装包。
+这些是依赖源码/文档核实，不是已完成真实授权、过期刷新、Windows 或宿主集成验收的声明。原仓库历史名称可能重定向到官方 [openclaw/mcporter](https://github.com/openclaw/mcporter)；`main` 文档会变化，优先核对精确 tag 与安装包。
 
 ## 本入口的稳定边界
 

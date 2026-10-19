@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "src" / "skills" / "portable-mcp" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-import install_mcporter as installer
-spec = importlib.util.spec_from_file_location("portable_entry", SCRIPTS / "mcporter.py")
+import install_runtime as installer
+spec = importlib.util.spec_from_file_location("portable_entry", SCRIPTS / "pmcp.py")
 entry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(entry)
 ACCOUNT_HOME = entry.account_home
@@ -140,14 +140,14 @@ class EntrySafetyTests(unittest.TestCase):
 
     def test_legacy_oauth_rejected_before_dispatch(self):
         self.write_config(self.server(auth="oauth"))
-        with patch.object(entry, "install_lock", return_value=entry.nullcontext()), patch.object(entry, "runtime", return_value=("/usr/bin/node", "0.9.0")), patch.object(entry, "execute") as execute, patch.object(sys, "argv", ["mcporter.py", "auth", "demo"]):
+        with patch.object(entry, "install_lock", return_value=entry.nullcontext()), patch.object(entry, "runtime", return_value=("/usr/bin/node", "0.9.0")), patch.object(entry, "execute") as execute, patch.object(sys, "argv", ["pmcp.py", "auth", "demo"]):
             with self.assertRaisesRegex(RuntimeError, "OAuth is unavailable"):
                 entry.main()
             execute.assert_not_called()
 
     def test_modern_auth_has_fixed_no_browser_argument(self):
         self.write_config(self.server(auth="oauth"))
-        with patch.object(entry, "install_lock", return_value=entry.nullcontext()), patch.object(entry, "runtime", return_value=("/usr/bin/node", "0.15.0")), patch.object(entry, "execute", return_value=0) as execute, patch.object(sys, "argv", ["mcporter.py", "auth", "demo"]):
+        with patch.object(entry, "install_lock", return_value=entry.nullcontext()), patch.object(entry, "runtime", return_value=("/usr/bin/node", "0.15.0")), patch.object(entry, "execute", return_value=0) as execute, patch.object(sys, "argv", ["pmcp.py", "auth", "demo"]):
             self.assertEqual(entry.main(), 0)
             execute.assert_called_once()
             argv, env, timeout = execute.call_args.args
@@ -155,6 +155,27 @@ class EntrySafetyTests(unittest.TestCase):
             self.assertEqual(argv[2:4], ["--config", str(self.config)])
             self.assertEqual(env["HOME"], str(self.state / "home"))
             self.assertEqual(timeout, 605)
+
+    def test_init_is_idempotent_and_preserves_config(self):
+        with patch.object(sys, "argv", ["pmcp.py", "init"]), patch("builtins.print"):
+            self.assertEqual(entry.main(), 0)
+            self.write_config(self.server())
+            before = self.config.read_bytes()
+            self.assertEqual(entry.main(), 0)
+            self.assertEqual(self.config.read_bytes(), before)
+
+    def test_node_drift_refused_before_backend_execution(self):
+        runtime = self.home / "runtime"
+        package = runtime / "node_modules/mcporter"
+        package.mkdir(parents=True)
+        (runtime / "skill-install.json").write_text(json.dumps({
+            "schemaVersion": 1, "package": "mcporter", "version": "0.9.0",
+            "cli": "node_modules/mcporter/dist/cli.js", "nodeVersion": "v22.23.3",
+        }), encoding="utf-8")
+        (package / "package.json").write_text(json.dumps({"name": "mcporter", "version": "0.9.0"}), encoding="utf-8")
+        with patch.object(entry, "RUNTIME", runtime), patch.object(entry, "PACKAGE", package), patch.object(entry, "resolve_node", return_value=("/usr/bin/node", "v24.21.0")), patch.object(entry, "resolve_npm_cli", side_effect=AssertionError("must stop on drift")):
+            with self.assertRaisesRegex(RuntimeError, "Node version changed"):
+                entry.runtime()
 
     def test_installer_reuse_is_offline(self):
         node_version = "v22.23.3"
@@ -177,7 +198,7 @@ class SemverSelectionTests(unittest.TestCase):
             raise unittest.SkipTest(str(error))
 
     def helper(self, versions, node_version=None):
-        return subprocess.run([self.node, str(SCRIPTS / "mcporter_versions.cjs"), "--npm-cli", self.npm, "select"], input=json.dumps({"nodeVersion": node_version or self.version, "versions": versions}), capture_output=True, text=True, env=installer.safe_env(self.node), timeout=30)
+        return subprocess.run([self.node, str(SCRIPTS / "runtime_versions.cjs"), "--npm-cli", self.npm, "select"], input=json.dumps({"nodeVersion": node_version or self.version, "versions": versions}), capture_output=True, text=True, env=installer.safe_env(self.node), timeout=30)
 
     def test_highest_stable_compatible_non_deprecated(self):
         major = int(self.version.lstrip("v").split(".")[0])

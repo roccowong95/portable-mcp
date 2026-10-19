@@ -1,14 +1,14 @@
 # 工具发现、schema 与精确调用
 
-`pmcp` 表示[固定入口](installation.md)，配置固定在 OS 账号真实 home 的 `.portable-mcp/config/mcporter.json`，不通过环境 HOME/USERPROFILE 或参数切换；服务 `docs` 必须已在该配置获准，工具名示例是占位符。没有 `@session`、connect、tools-list/tools-get/tools-call 或 native CLI 透传。
+业务使用[固定入口](installation.md) `python3 <skill-root>/scripts/pmcp.py`；`<skill-root>` 替换为实际 skill 安装目录，不是全局命令。配置固定在 OS 账号真实 home 的 `.portable-mcp/config/mcporter.json`，内部文件名为兼容保留，不通过环境 HOME/USERPROFILE 或参数切换。服务 `docs` 必须已获准配置，工具名示例是占位符。没有 `@session`、connect 或 native CLI 透传。
 
 ## 1. 选择服务，渐进发现
 
 ```sh
-pmcp servers
-pmcp doctor
-pmcp tools docs --query search
-pmcp schema docs ACTUAL_TOOL_NAME
+python3 /actual/skill/scripts/pmcp.py servers
+python3 /actual/skill/scripts/pmcp.py doctor
+python3 /actual/skill/scripts/pmcp.py tools docs --query search
+python3 /actual/skill/scripts/pmcp.py schema docs ACTUAL_TOOL_NAME
 ```
 
 - `servers` / `doctor` 是离线本地检查，不启动 stdio、不验证联网/登录；doctor 的离线成功不能证明服务可达。
@@ -30,18 +30,18 @@ pmcp schema docs ACTUAL_TOOL_NAME
 
 ## 3. JSON stdin，原始 MCP 结果
 
-读到实际 schema 并获业务授权后才提交实际参数：
+以下 `/actual/skill` 替换为实际 skill 安装目录；读到实际 schema 并获业务授权后才提交实际参数：
 
 ```sh
-pmcp call docs ACTUAL_TOOL_NAME <<'JSON'
+python3 /actual/skill/scripts/pmcp.py call docs ACTUAL_TOOL_NAME <<'JSON'
 {"query":"example","limit":3}
 JSON
 ```
 
-PowerShell 可用简单 ASCII pipeline（`pmcp` 仍是完整 Python 前缀的简写）：
+PowerShell 可用简单 ASCII pipeline（用本机实际安装路径替换占位路径）：
 
 ```powershell
-'{"query":"example","limit":3}' | pmcp call docs ACTUAL_TOOL_NAME
+'{"query":"example","limit":3}' | python3 /actual/skill/scripts/pmcp.py call docs ACTUAL_TOOL_NAME
 ```
 
 复杂 Unicode 使用明确 UTF-8 的进程 API/受控输入，避免旧 PowerShell native pipeline 编码变化。对用户/工具数据不拼接 shell：
@@ -50,7 +50,7 @@ PowerShell 可用简单 ASCII pipeline（`pmcp` 仍是完整 Python 前缀的简
 import json
 import subprocess
 
-command = [python_path, str(skill_root / "scripts" / "mcporter.py"),
+command = ["python3", str(skill_root / "scripts" / "pmcp.py"),
            "call", "docs", actual_tool_name]
 result = subprocess.run(command,
                         input=json.dumps(arguments, ensure_ascii=False),
@@ -78,4 +78,4 @@ stdin 必须是对象（即使无参数也传 `{}`），不是数组、字符串
 
 ## 5. 命令结束
 
-每条命令关闭本次连接与子进程，首版不保留会话、订阅或 daemon。没有 close 命令；关闭连接不等于撤权、不保证远端任务取消。旧计划的 keepalive 延期单独验证，不承诺后台复用或跨命令订阅。
+每条命令关闭本次连接与子进程，目前不保留会话、订阅或 daemon。没有 close 命令；关闭连接不等于撤权、不保证远端任务取消。不支持后台复用或跨命令订阅。

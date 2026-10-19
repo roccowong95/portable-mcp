@@ -8,12 +8,12 @@
 
 ## 2. 固定无浏览器授权与版本门槛
 
-`pmcp` 是[固定入口](installation.md)简写，以下仅展示接口，不是立即执行的授权指令：
+以下通过[固定入口](installation.md)展示接口，不是立即执行的授权指令；`/actual/skill` 替换为实际 skill 安装目录：
 
 ```sh
-pmcp auth oauth-service
+python3 /actual/skill/scripts/pmcp.py auth oauth-service
 # 清理/重建认证状态须另行确认，不作为普通重试
-pmcp auth oauth-service --reset
+python3 /actual/skill/scripts/pmcp.py auth oauth-service --reset
 ```
 
 **auth 固定不自动打开浏览器，仅支持已核实 mcporter >=0.15.0。** 用户没有浏览器模式、超时、旧版风险接受或其他认证开关；<0.15 的 auth（包括 reset）失败关闭。旧版本即使存在不同原生参数，也不允许绕过入口尝试。不升级系统 Node 迁就授权；现有 Node 无兼容现代授权路径时停止并说明限制。
@@ -34,11 +34,11 @@ auth 成功、发现成功、新进程持久性、真实过期刷新是独立验
 
 ## 4. 无桌面与远程 callback
 
-不自动打开浏览器时，授权 URL 仅通过私有终端/受控通道交给用户，保持原 auth 进程存活并遵循实际版本的回调流程。若浏览器在用户电脑而客户端在远端，localhost 指用户电脑；先核对 redirect URI 和实际 loopback 端口，管理员可经许可设置仅绑定本机的 SSH 转发，结束后关闭，不公开 callback 端口。
+不自动打开浏览器时，授权 URL 仅通过私有终端/受控通道交给用户，保持原 auth 进程存活并遵循实际版本的回调流程。若浏览器和客户端在不同机器，浏览器中的 localhost 指浏览器所在机器；先核对 redirect URI 和实际 loopback 端口，由管理员经许可安排与该回调合同匹配的私有连接，结束后关闭，不公开 callback 端口。本入口不提供远程回调转发器，也不承诺此部署一定可完成授权。
 
 不承诺自动 code 回传，不重放旧 code，不把 callback URL 交给模型。**含 code/state、PKCE verifier、access/refresh token 的 URL、日志或 JSON 不进入聊天、argv、skill 或示例。** 授权 URL 本身也可能敏感，不适合公开。
 
-本入口不是通用 callback 校验器，不能把旧 mcpc 的安全结论套给 mcporter，也不因包名变化宣称 OAuth 已验收。真实授权前核对版本、回调、账号、redirect 和 scope，见[官方来源](sources.md)。
+本入口不是通用 callback 校验器，不能把其他客户端的安全结论套给底层依赖，也不因产品或入口命名变化宣称 OAuth 已验收。真实授权前核对版本、回调、账号、redirect 和 scope，见[官方来源](sources.md)。
 
 ## 5. 固定状态、vault 与锁
 
@@ -58,9 +58,9 @@ vault **明文不加密**，不提交、打包、打印或传模型。POSIX 私�
 ## 6. logout、迁移与撤权
 
 ```sh
-pmcp logout oauth-service
+python3 /actual/skill/scripts/pmcp.py logout oauth-service
 ```
 
 logout 是经确认的本地认证清理，范围随版本变化，不等于撤销远端 grant，不保证运行任务取消；匿名/静态 key 的 logout 不替你撤销 API Key。服务端撤权在账号设置中按实际流程另获确认。
 
-旧 mcpc/keyring/其他客户端凭据、旧自选状态目录不自动导入，跨机器/跨版本不默认复制 token，见[迁移指南](file-storage.md)。首版无后台会话/keepalive，不提供 close @session；关闭连接不是删除凭据或撤权。
+旧客户端/keyring 凭据、旧自选状态目录不自动导入，跨机器/跨版本不默认复制 token，见[私有存储与迁移](file-storage.md)。当前无后台会话/keepalive，不提供 close @session；关闭连接不是删除凭据或撤权。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit skill-local mcporter install; never upgrades Node or runs during calls.
+"""Explicit skill-local portable-mcp runtime install; never upgrades Node or runs during calls.
 
 Requires Python 3.9+, an existing Node and npm's own semver. The default reuses a
 valid compatible installation without network access. --update explicitly selects
@@ -28,7 +28,7 @@ RUNTIME_PARENT = SCRIPTS / ".runtime"
 RUNTIME = RUNTIME_PARENT / "mcporter"
 PACKAGE_REL = Path("node_modules/mcporter")
 CLI_REL = "node_modules/mcporter/dist/cli.js"
-HELPER = SCRIPTS / "mcporter_versions.cjs"
+HELPER = SCRIPTS / "runtime_versions.cjs"
 MARKER_NAME = "skill-install.json"
 REGISTRY = "https://registry.npmjs.org/"
 MAX_METADATA_BYTES = 64 * 1024 * 1024
@@ -73,7 +73,7 @@ def install_lock(timeout=30):
                 if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                     raise
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("mcporter runtime is busy; retry after the active command or installer exits") from None
+                    raise RuntimeError("Runtime is busy; retry after the active command or installer exits") from None
                 time.sleep(0.1)
         yield
     finally:
@@ -165,13 +165,13 @@ def previous_install():
     marker = read_object(RUNTIME / MARKER_NAME)
     if (marker.get("schemaVersion") != 1 or marker.get("package") != "mcporter"
             or marker.get("cli") != CLI_REL or not isinstance(marker.get("version"), str)):
-        raise RuntimeError("Unrecognized mcporter install marker; inspect runtime manually, do not overwrite it")
+        raise RuntimeError("Unrecognized runtime install marker; inspect runtime manually, do not overwrite it")
     pkg = read_object(RUNTIME / PACKAGE_REL / "package.json")
     if pkg.get("name") != "mcporter" or pkg.get("version") != marker["version"]:
-        raise RuntimeError("Installed package does not match mcporter marker; inspect runtime manually")
+        raise RuntimeError("Installed package does not match runtime marker; inspect runtime manually")
     cli = RUNTIME / CLI_REL
     if cli.is_symlink() or not cli.is_file():
-        raise RuntimeError("Installed mcporter CLI is missing or a symlink")
+        raise RuntimeError("Installed runtime CLI is missing or a symlink")
     return marker
 
 
@@ -202,18 +202,18 @@ class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
 def fetch_versions():
     request = urllib.request.Request(REGISTRY + "mcporter", headers={
         "Accept": "application/json",  # Full packument, including deprecations/engines.
-        "User-Agent": "portable-mcp-mcporter-installer/1"})
+        "User-Agent": "portable-mcp-runtime-installer/1"})
     try:
         with urllib.request.build_opener(HTTPSRedirectHandler()).open(request, timeout=60) as response:
             body = response.read(MAX_METADATA_BYTES + 1)
     except (urllib.error.URLError, OSError):
-        raise RuntimeError("Cannot fetch HTTPS mcporter metadata from the official npm registry; check connectivity") from None
+        raise RuntimeError("Cannot fetch HTTPS runtime metadata from the official npm registry; check connectivity") from None
     if len(body) > MAX_METADATA_BYTES:
         raise RuntimeError("Registry metadata exceeds the 64 MiB safety limit")
     metadata = json.loads(body)
     if (not isinstance(metadata, dict) or metadata.get("name") != "mcporter"
             or not isinstance(metadata.get("versions"), dict)):
-        raise RuntimeError("Registry response is not full mcporter metadata")
+        raise RuntimeError("Registry response is not full runtime metadata")
     # All remote fields remain untrusted data, used only by the semver helper.
     return metadata["versions"]
 
@@ -221,12 +221,12 @@ def fetch_versions():
 def verify_package(directory, expected, node_version, helper_command, env):
     pkg = read_object(directory / PACKAGE_REL / "package.json")
     if pkg.get("name") != "mcporter" or pkg.get("version") != expected:
-        raise RuntimeError("Installed mcporter package name/version mismatch")
+        raise RuntimeError("Installed runtime package name/version mismatch")
     result = run_json(helper_command + ["check-installed"],
                       {"nodeVersion": node_version, "package": pkg}, env)
     cli = directory / CLI_REL
     if cli.is_symlink() or not cli.is_file():
-        raise RuntimeError("mcporter dist/cli.js is missing or a symlink")
+        raise RuntimeError("Runtime dist/cli.js is missing or a symlink")
     return result
 
 
@@ -245,7 +245,7 @@ def install_staged(version, selection, node, node_version, npm_cli, helper_comma
         for filename in ("npm-user.conf", "npm-global.conf", ".npmrc"):
             (stage / filename).write_text("", encoding="utf-8")
         (stage / "package.json").write_text(json.dumps({
-            "name": "portable-mcporter-runtime", "version": "1.0.0", "private": True
+            "name": "portable-mcp-runtime", "version": "1.0.0", "private": True
         }, indent=2) + "\n", encoding="utf-8")
         install_env = env.copy()
         install_env.update({
@@ -273,7 +273,7 @@ def install_staged(version, selection, node, node_version, npm_cli, helper_comma
         lock = read_object(stage / "package-lock.json")
         locked = lock.get("packages", {}).get("node_modules/mcporter", {})
         if manifest.get("dependencies", {}).get("mcporter") != version or locked.get("version") != version:
-            raise RuntimeError("Exact mcporter dependency/package-lock verification failed")
+            raise RuntimeError("Exact runtime dependency/package-lock verification failed")
         marker = {
             "schemaVersion": 1, "package": "mcporter", "version": version,
             "nodeVersion": node_version, "nodeExecutable": node, "npmCli": npm_cli,
@@ -357,7 +357,7 @@ def main_locked(args):
     stage = install_staged(selected["version"], selected, node, node_version,
                            npm_cli, helper_command, env)
     promote(stage, previous)
-    print("Installed private mcporter runtime; exact package-lock retained. No MCP connected and Node unchanged.")
+    print("Installed private portable-mcp runtime; exact package-lock retained. No MCP connected and Node unchanged.")
     return 0
 
 
@@ -365,5 +365,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print("MCPORTER_INSTALL_FAILED: " + str(error), file=sys.stderr)
+        print("PMCP_RUNTIME_INSTALL_FAILED: " + str(error), file=sys.stderr)
         sys.exit(1)

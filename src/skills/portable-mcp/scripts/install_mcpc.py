@@ -3,5 +3,5 @@
 import sys
 
 if __name__ == "__main__":
-    print("MCPC_INSTALL_RETIRED: use install_mcporter.py explicitly; Node is never upgraded and the old runtime is preserved", file=sys.stderr)
+    print("MCPC_INSTALL_RETIRED: use install_runtime.py explicitly; Node is never upgraded and the old runtime is preserved", file=sys.stderr)
     sys.exit(1)

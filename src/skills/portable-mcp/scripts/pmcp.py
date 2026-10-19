@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Private, version-independent MCPorter entry. Never installs or upgrades Node."""
+"""Private, version-independent portable-mcp entry. Never installs or upgrades Node."""
 import argparse
 from contextlib import contextmanager, nullcontext
-from install_mcporter import install_lock, resolve_node, resolve_npm_cli, safe_env
+from install_runtime import install_lock, resolve_node, resolve_npm_cli, safe_env
 import json
 import os
 from pathlib import Path
@@ -258,11 +258,11 @@ def runtime():
         fail("Node version changed; explicitly run installer --update to revalidate transitive engines (Node is never upgraded)")
     # Locate npm again after relocation; do not embed any package version in the entry.
     npm_cli = resolve_npm_cli(node)
-    helper = [node, str(SCRIPTS / "mcporter_versions.cjs"), "--npm-cli", npm_cli, "check-installed"]
+    helper = [node, str(SCRIPTS / "runtime_versions.cjs"), "--npm-cli", npm_cli, "check-installed"]
     result = subprocess.run(helper, input=json.dumps({"nodeVersion": version, "package": pkg}),
                             capture_output=True, text=True, env=env, timeout=60)
     if result.returncode:
-        fail("Installed mcporter is incompatible with this Node, or npm semver is unavailable; run installer explicitly")
+        fail("Installed runtime is incompatible with this Node, or npm semver is unavailable; run installer explicitly")
     return node, pkg["version"]
 
 
@@ -341,7 +341,7 @@ def main():
         # The same discovered Node resolves stdio server shebangs consistently.
         env = child_environment(state, node)
         if args.command == "version":
-            print(json.dumps({"package": "mcporter", "version": version, "node": node}))
+            print(json.dumps({"backend": {"package": "mcporter", "version": version}, "node": node}))
             return 0
         cli = [node, str(PACKAGE / "dist" / "cli.js"), "--config", str(config)]
         if args.command in ("auth", "logout"):
@@ -350,13 +350,13 @@ def main():
             else:
                 parts = tuple(int(part) for part in version.split(".")[:3])
                 if parts < (0, 15, 0):
-                    fail("OAuth is unavailable with this compatible runtime: fixed headless safety baseline requires mcporter >=0.15.0. Use header authentication; Node will not be changed")
+                    fail("OAuth is unavailable with this compatible runtime: fixed headless safety baseline requires runtime >=0.15.0. Use header authentication; Node will not be changed")
                 argv = cli + ["auth", server, "--no-browser"]
                 if args.reset:
                     argv.append("--reset")
             code = execute(argv, env, AUTH_TIMEOUT_SECONDS + CLEANUP_GRACE_SECONDS)
         else:
-            argv = [node, str(SCRIPTS / "mcporter_bridge.mjs"), str(PACKAGE), str(config), args.command]
+            argv = [node, str(SCRIPTS / "mcp_bridge.mjs"), str(PACKAGE), str(config), args.command]
             if server:
                 argv.append(server)
             if getattr(args, "tool", None):

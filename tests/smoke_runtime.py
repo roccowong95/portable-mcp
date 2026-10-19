@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BRIDGE = ROOT / 'src/skills/portable-mcp/scripts/mcporter_bridge.mjs'
+BRIDGE = ROOT / 'src/skills/portable-mcp/scripts/mcp_bridge.mjs'
 FIXTURE = r'''
 import json, sys
 from pathlib import Path

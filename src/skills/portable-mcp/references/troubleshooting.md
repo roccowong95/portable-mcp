@@ -1,5 +1,7 @@
 # 故障排查与固定策略
 
+业务入口始终为 `python3 <skill-root>/scripts/pmcp.py`，显式安装器为 `python3 <skill-root>/scripts/install_runtime.py`；`<skill-root>` 替换为实际 skill 安装目录。内部依赖 `mcporter`，包名、版本错误和兼容状态路径如实保留，不通过改名消除依赖或权限限制。
+
 | 现象 | 先做什么 |
 |---|---|
 | 找不到运行时/安装记录不匹配 | 取得下载许可后显式运行安装器，不改记录、不用全局 CLI 或浮动 npx |
@@ -10,7 +12,7 @@
 | 有 stage/backup 遗留 | 不删未知目录；核对确切绝对路径、无人使用及用户许可后处理，保留可回退副本 |
 | 配置被拒绝 | 严格 JSON，根 key 仅 mcpServers/imports，imports 为 []；每个服务显式 ephemeral，无 refresh/tokenCacheDir |
 | Profile is busy | 固定账号 profile 正在使用，锁内部最多等 30 秒；不换目录/账号、复制凭据或改环境绕过 |
-| 新 SSH/exec 看不到授权 | 比较机器、OS 账号、skill 入口、运行时版本。状态来自真实 OS home（POSIX pwd / Windows 系统 profile），环境 HOME/USERPROFILE 不切换身份；旧自选目录不导入 |
+| 新命令进程看不到授权 | 比较机器、OS 账号、skill 入口、运行时版本。状态来自真实 OS home（POSIX pwd / Windows 系统 profile），环境 HOME/USERPROFILE 不切换身份；旧自选目录不导入 |
 | 旧 vault JSON 损坏 | 停止，保留受保护副本；非原子写入中断可能损坏。入口不自动重置/修复，恢复/删除由用户决定；重新授权仍需现代门槛 |
 | 旧版 auth 被拒绝 | auth 固定无自动浏览器且只支持 >=0.15。无接受旧风险的开关；已有合法 token 的普通操作可用不代表可重新授权，不升级 Node |
 | tools --query 没匹配 | 字面、不区分大小写子串，不是正则；空列表不触发登录 |
@@ -31,7 +33,7 @@
 
 - 不是宿主原生工具注册器，不保证宿主一定按 description 触发。
 - 不是业务授权白名单、沙箱或多租户安全边界；shell 调用者仍可能绕过入口。
-- 不支持 keepalive/daemon、connect/close/@session/serve/generate 或 native 透传。旧持久会话计划延期独立解决版本差异、后台所有权与退出语义。
+- 仅 ephemeral；不支持 keepalive/daemon、connect/close/@session/serve/generate、后台订阅或 native 透传。不承诺持久会话或后台所有权管理。
 - 不保证服务输出可信、行为稳定、exactly-once、效果可撤销或真实过期刷新已验收。
 - 文件 vault 明文；OS 锁仅串行化合作入口，不修复旧回调漏洞、旧非原子写入或同权限恶意进程。
 

@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { BridgeError, executeBridge, parseArguments } from '../src/skills/portable-mcp/scripts/mcporter_bridge.mjs';
+import { BridgeError, executeBridge, parseArguments } from '../src/skills/portable-mcp/scripts/mcp_bridge.mjs';
 
 const VERSIONS = ['0.9.0', '0.15.0'];
 const TIMEOUT = 1234;
@@ -259,7 +259,7 @@ for (const version of VERSIONS) {
     const doctor = await f.run({ operation: 'doctor' });
     assert.equal(doctor.exitCode, 0);
     assert.equal(doctor.output.ok, true);
-    assert.equal(doctor.output.mcporterVersion, version);
+    assert.deepEqual(doctor.output.backend, { package: 'mcporter', version });
     assert.equal(doctor.output.nodeVersion, process.version);
     assert.deepEqual(doctor.output.servers, ['alpha', 'zeta']);
     assert.deepEqual(doctor.output.unsupportedServers, []);
