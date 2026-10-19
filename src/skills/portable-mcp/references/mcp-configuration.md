@@ -2,7 +2,7 @@
 
 ## 1. 唯一的私有配置
 
-先运行 `python3 <skill-root>/scripts/pmcp.py init`（`<skill-root>` 替换为实际 skill 安装目录），编辑其返回的 OS 账号真实 home 下 `.portable-mcp/config/mcporter.json`，而不是修改 skill 源码或扫描宿主配置。该内部文件名为兼容保留，不是产品名称。POSIX 以 `pwd.getpwuid`、Windows 以系统 profile 定位，不采用环境 HOME/USERPROFILE，不提供路径或环境覆盖，不自动迁移旧自选目录。根 key 只接受 `mcpServers` 与明确的 `"imports": []`；省略 imports 会让上游尝试默认导入其他客户端，不符合本版隔离合同。每个服务必须显式指定 `"lifecycle": "ephemeral"`（也接受仅含 `mode: "ephemeral"` 的对象），不依赖上游按服务名推断默认生命周期。所有命令（包括 auth）先校验配置，不自动改写配置。
+先运行 `python3 <skill-root>/scripts/pmcp.py init`（`<skill-root>` 替换为实际 skill 安装目录），编辑其返回的 OS 账号真实 home 下 `.portable-mcp/config/mcporter.json`，而不是修改 skill 源码或扫描宿主配置。该内部文件名为兼容保留，不是产品名称。POSIX 以 `pwd.getpwuid`、Windows 以系统 profile 定位，不采用环境 HOME/USERPROFILE，不提供路径或环境覆盖，不自动迁移旧自选目录。根 key 只接受 `mcpServers` 与明确的 `"imports": []`；省略 imports 会让上游尝试默认导入其他客户端，不符合本版隔离合同。每个服务必须显式指定 `"lifecycle": "ephemeral"`（也接受仅含 `mode: "ephemeral"` 的对象），不依赖上游按服务名推断默认生命周期。所有业务命令（包括 auth）先校验配置，不自动改写配置。`pmcp.py meta-*` 仅维护 skill description，无需 init、运行时或 Node，不访问该配置、账号状态或 MCP。
 
 | 对象 | 内容 |
 |---|---|

@@ -1,5 +1,7 @@
 """Offline safety regressions. No package installation, MCP server or real vault."""
+from contextlib import ExitStack
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -184,6 +186,149 @@ class EntrySafetyTests(unittest.TestCase):
             for check in (False, True):
                 with self.subTest(check=check):
                     self.assertEqual(installer.main_locked(type("Args", (), {"update": False, "check": check})()), 0)
+
+
+class MetadataDispatchTests(unittest.TestCase):
+    """Metadata dispatch must not even inspect real account or runtime state."""
+
+    def test_metadata_runs_before_any_runtime_or_account_access(self):
+        with tempfile.TemporaryDirectory(prefix="pmcp-meta-dispatch-") as temporary:
+            root = Path(temporary)
+            skill = root / "SKILL.md"
+            skill.write_bytes((SCRIPTS.parent / "SKILL.md").read_bytes())
+            manifest = root / "capabilities.json"
+            manifest.write_text('{"second":"second service"}', encoding="utf-8")
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(entry, "META_ROOT", root))
+                stack.enter_context(patch.object(entry, "META_SKILL", skill))
+                guards = {name: stack.enter_context(patch.object(
+                    entry, name, side_effect=AssertionError("Metadata touched " + name)))
+                    for name in ("account_home", "prepare_state", "profile_lock", "install_lock",
+                                 "runtime", "resolve_node", "resolve_npm_cli", "execute")}
+                calls = (("meta-list",), ("meta-add", "demo", "service"),
+                         ("meta-sync", "--input", str(manifest), "--replace", "--dry-run"),
+                         ("meta-rm", "demo"))
+                for args in calls:
+                    with self.subTest(args=args), patch.object(sys, "argv", ["pmcp.py", *args]), \
+                            patch("sys.stdout", new_callable=io.StringIO) as output:
+                        self.assertEqual(entry.main(), 0)
+                        self.assertIn("capabilities", json.loads(output.getvalue()))
+                with patch.object(sys, "argv", ["pmcp.py", "meta-add", "demo", "bad\nsummary"]), \
+                        patch("sys.stderr", new_callable=io.StringIO) as error:
+                    self.assertEqual(entry.main(), 1)
+                    self.assertIn("PMCP_META_FAILED:", error.getvalue())
+                for guard in guards.values():
+                    guard.assert_not_called()
+            self.assertEqual(sorted(p.name for p in root.iterdir()), ["SKILL.md", "capabilities.json"])
+
+    def test_metadata_parser_retains_flags_and_backend_commands(self):
+        cases = ((["meta-add", "demo", "summary", "--dry-run", "--lock-timeout", "0"],
+                  {"command": "meta-add", "name": "demo", "description": "summary",
+                   "dry_run": True, "lock_timeout": 0.0}),
+                 (["meta-rm", "demo", "--dry-run"],
+                  {"command": "meta-rm", "name": "demo", "dry_run": True}),
+                 (["meta-list", "--lock-timeout", "2.5"],
+                  {"command": "meta-list", "lock_timeout": 2.5}),
+                 (["meta-sync", "--input", "fixture.json", "--replace", "--dry-run"],
+                  {"command": "meta-sync", "input": "fixture.json", "replace": True, "dry_run": True}),
+                 (["call", "demo", "tool"], {"command": "call", "server": "demo", "tool": "tool"}),
+                 (["auth", "demo", "--reset"], {"command": "auth", "server": "demo", "reset": True}))
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                args = vars(entry.parser().parse_args(argv))
+                for key, value in expected.items():
+                    self.assertEqual(args[key], value)
+        for argv in (["meta-sync"], ["meta-add", "demo"], ["meta-list", "--replace"],
+                     ["meta-rm", "demo", "--input", "fixture.json"]):
+            with self.subTest(argv=argv), patch("sys.stderr"), self.assertRaises(SystemExit) as error:
+                entry.parser().parse_args(argv)
+            self.assertEqual(error.exception.code, 2)
+
+    def test_metadata_location_is_the_imported_skill_not_cwd(self):
+        self.assertEqual(entry.META_ROOT, SCRIPTS.parent)
+        self.assertEqual(entry.META_SKILL, SCRIPTS.parent / "SKILL.md")
+
+
+class RegistryPolicyTests(unittest.TestCase):
+    REGISTRY = "https://registry.npmmirror.com/"
+
+    def test_fixed_registry_and_no_cli_override(self):
+        self.assertEqual(installer.REGISTRY, self.REGISTRY)
+        with patch.object(sys, "argv", ["install_runtime.py", "--registry", "https://example.invalid/"]), \
+                patch("sys.stderr"), patch.object(installer, "main_locked") as dispatch, \
+                self.assertRaises(SystemExit) as error:
+            installer.main()
+        self.assertEqual(error.exception.code, 2)
+        dispatch.assert_not_called()
+
+    def test_metadata_fetch_uses_fixed_mirror_despite_environment(self):
+        versions = {"0.9.0": {"name": "mcporter", "version": "0.9.0"}}
+        body = json.dumps({"name": "mcporter", "versions": versions}).encode("utf-8")
+        with patch.dict(os.environ, {"NPM_CONFIG_REGISTRY": "https://example.invalid/",
+                                     "npm_config_registry": "https://example.invalid/"}), \
+                patch.object(installer.urllib.request, "build_opener") as build:
+            response = build.return_value.open.return_value.__enter__.return_value
+            response.read.return_value = body
+            self.assertEqual(installer.fetch_versions(), versions)
+        request = build.return_value.open.call_args.args[0]
+        self.assertEqual(request.full_url, self.REGISTRY + "mcporter")
+        self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(build.return_value.open.call_args.kwargs, {"timeout": 60})
+        response.read.assert_called_once_with(installer.MAX_METADATA_BYTES + 1)
+
+    def test_mock_npm_install_has_exact_registry_and_safety_parameters(self):
+        with tempfile.TemporaryDirectory(prefix="pmcp-mock-install-") as temporary:
+            runtime_parent = Path(temporary) / ".runtime"
+            node, npm_cli = str(Path(temporary) / "node"), str(Path(temporary) / "npm-cli.js")
+            version, node_version = "0.9.0", "v22.23.3"
+            selection = {"version": version, "engineRange": ">=20.11.0"}
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append((command, kwargs))
+                if command[-1] == "--version":
+                    return subprocess.CompletedProcess(command, 0, stdout="10.9.2\n")
+                # Generate only minimal local fixtures normally produced by npm.
+                stage = Path(kwargs["cwd"])
+                (stage / "package.json").write_text(json.dumps({
+                    "dependencies": {"mcporter": version}}), encoding="utf-8")
+                (stage / "package-lock.json").write_text(json.dumps({"packages": {
+                    "node_modules/mcporter": {"version": version}}}), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+
+            poison = {"npm_config_registry": "https://example.invalid/",
+                      "NPM_CONFIG_USERCONFIG": "untrusted.conf", "NODE_OPTIONS": "--require untrusted"}
+            old_umask = os.umask(0o077)
+            self.addCleanup(os.umask, old_umask)
+            with patch.dict(os.environ, poison), patch.object(installer, "RUNTIME_PARENT", runtime_parent), \
+                    patch.object(installer.subprocess, "run", side_effect=fake_run), \
+                    patch.object(installer, "verify_package", return_value=selection), \
+                    patch.object(installer, "fetch_versions", side_effect=AssertionError("unexpected fetch")), \
+                    patch("builtins.print"):
+                stage = installer.install_staged(version, selection, node, node_version, npm_cli,
+                                                [node, "helper.cjs"], installer.safe_env(node))
+            self.assertEqual(len(calls), 2)
+            command, options = calls[1]
+            self.assertEqual(command, [node, npm_cli, "install", "--prefix", str(stage),
+                                      "--global=false", "--workspaces=false", "--save-exact",
+                                      "--package-lock=true", "--ignore-scripts", "--engine-strict",
+                                      "--no-audit", "--no-fund", "--omit=dev", "--registry",
+                                      self.REGISTRY, "mcporter@" + version])
+            self.assertTrue(options["check"])
+            self.assertFalse(options["shell"])
+            self.assertEqual(options["cwd"], str(stage))
+            env = options["env"]
+            for key in poison:
+                self.assertNotIn(key, env)
+            self.assertEqual(env["npm_config_userconfig"], str(stage / "npm-user.conf"))
+            self.assertEqual(env["npm_config_globalconfig"], str(stage / "npm-global.conf"))
+            self.assertEqual(env["npm_config_cache"], str(stage / "npm-cache"))
+            for name in (".npmrc", "npm-user.conf", "npm-global.conf"):
+                self.assertEqual((stage / name).read_bytes(), b"")
+            marker = json.loads((stage / installer.MARKER_NAME).read_text(encoding="utf-8"))
+            self.assertEqual(marker["registry"], self.REGISTRY)
+            self.assertFalse(marker["installScripts"])
+            self.assertEqual(marker["version"], version)
 
 
 class SemverSelectionTests(unittest.TestCase):

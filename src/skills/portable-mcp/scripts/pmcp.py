@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Private, version-independent portable-mcp entry. Never installs or upgrades Node."""
+"""Portable-mcp entry: private MCP operations and skill-local capability metadata.
+
+Never installs or upgrades Node. The meta-* commands need only Python and this
+skill's files; they do not initialize account state or load the MCP runtime.
+"""
 import argparse
 from contextlib import contextmanager, nullcontext
 from install_runtime import install_lock, resolve_node, resolve_npm_cli, safe_env
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,6 +17,8 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
+import unicodedata
 
 SCRIPTS = Path(__file__).resolve().parent
 RUNTIME = SCRIPTS / ".runtime" / "mcporter"
@@ -298,6 +305,276 @@ def execute(argv, env, deadline):
         fail("Request interrupted or timed out; outcome may be unknown. It was NOT replayed")
 
 
+# Metadata stays skill-local and uses a separate writer lock, not account state.
+META_ROOT = SCRIPTS.parent
+META_SKILL = META_ROOT / "SKILL.md"
+META_MARKER = "PMCP_CAPABILITIES="
+META_MAX_FILE_BYTES = 256 * 1024
+META_MAX_INPUT_BYTES = 64 * 1024
+META_MAX_ITEMS = 24
+META_MAX_SUMMARY = 160
+META_MAX_INDEX_BYTES = 4096
+META_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\Z")
+
+
+class MetaError(Exception):
+    pass
+
+
+def meta_require(condition, message):
+    if not condition:
+        raise MetaError(message)
+
+
+def meta_pairs_unique(pairs):
+    result = {}
+    for key, value in pairs:
+        meta_require(key not in result, "Duplicate JSON key; repair the index manually")
+        result[key] = value
+    return result
+
+
+def meta_validate_name(name):
+    meta_require(isinstance(name, str) and META_NAME.fullmatch(name),
+            "Name must be 1..64 ASCII letters/digits/._-, starting with a letter/digit")
+
+
+def meta_validate_summary(value):
+    meta_require(isinstance(value, str) and value == value.strip() and 0 < len(value) <= META_MAX_SUMMARY,
+            "Summary must be 1..160 characters with no leading/trailing whitespace")
+    meta_require(not any(unicodedata.category(c).startswith("C") or c in "\u2028\u2029" for c in value),
+            "Summary cannot contain control, format, surrogate or line-separator characters")
+    meta_require(META_MARKER not in value, "Summary cannot contain the reserved capability marker")
+
+
+def meta_encode_index(index):
+    meta_require(isinstance(index, dict), "Capability index must be a JSON object")
+    meta_require(len(index) <= META_MAX_ITEMS, "At most 24 capability entries are allowed")
+    for name, summary in index.items():
+        meta_validate_name(name)
+        meta_validate_summary(summary)
+    data = json.dumps(index, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    meta_require(len(data.encode("utf-8")) <= META_MAX_INDEX_BYTES, "Capability index exceeds 4096 UTF-8 bytes")
+    return data
+
+
+def meta_read_skill():
+    info = META_SKILL.lstat()
+    meta_require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1,
+            "SKILL.md must be a regular, non-symlink, single-link file")
+    meta_require(info.st_size <= META_MAX_FILE_BYTES, "SKILL.md is unexpectedly large")
+    if os.name == "posix":
+        meta_require(info.st_uid == os.getuid(), "Refusing to replace a file owned by another user")
+    raw = META_SKILL.read_bytes()
+    meta_require(len(raw) <= META_MAX_FILE_BYTES, "SKILL.md is unexpectedly large")
+    text = raw.decode("utf-8")
+    meta_require("\r" not in text.replace("\r\n", ""), "Unsupported newline format")
+    return raw, text, info
+
+
+def meta_parse_index(text):
+    # Deliberately NOT a general YAML rewriter. Only the documented folded scalar
+    # is supported. Refuse ambiguous formats instead of rewriting other metadata.
+    lines = text.splitlines(keepends=True)
+    meta_require(lines and lines[0].rstrip("\r\n") == "---", "Missing YAML frontmatter")
+    endings = [i for i in range(1, len(lines)) if lines[i].rstrip("\r\n") == "---"]
+    meta_require(bool(endings), "Unterminated YAML frontmatter")
+    end = endings[0]
+    # Restrict top-level keys to plain identifiers, so quoted/escaped duplicate
+    # YAML keys cannot change which description a host actually sees.
+    keys = {}
+    for i in range(1, end):
+        line = lines[i].rstrip("\r\n")
+        if not line or line.startswith((" ", "#")):
+            continue
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*) *:(?: +|$)", line)
+        meta_require(match is not None, "Unsupported top-level YAML syntax; review manually")
+        key = match.group(1)
+        meta_require(key not in keys, "Duplicate top-level YAML key; review manually")
+        keys[key] = i
+    descriptions = [keys["description"]] if "description" in keys else []
+    meta_require(len(descriptions) == 1, "Expected exactly one description field")
+    start = descriptions[0]
+    meta_require(lines[start].rstrip("\r\n") == "description: >-",
+            "Expected description: >-; custom YAML forms require manual review")
+    stop = start + 1
+    while stop < end and lines[stop].startswith("  "):
+        stop += 1
+    # Blank lines do not terminate a YAML block scalar. Refuse any later
+    # indented continuation rather than silently editing only half the scalar.
+    following = stop
+    while following < end and (not lines[following].strip() or lines[following].startswith("#")):
+        following += 1
+    meta_require(following == end or not lines[following].startswith((" ", "\t")),
+            "Description continuation after a blank line is unsupported")
+    content = [line.rstrip("\r\n") for line in lines[start + 1:stop]]
+    meta_require(content and all(line.startswith("  ") and line[2:] and not line[2:].startswith(" ")
+                            for line in content), "Expected nonempty, exactly two-space-indented description lines")
+    marker_lines = [i for i, line in enumerate(content) if line.startswith("  " + META_MARKER)]
+    meta_require(marker_lines == [len(content) - 1] and len(content) >= 2,
+            "Expected one final PMCP_CAPABILITIES JSON line after the fixed description")
+    meta_require(sum(line.count(META_MARKER) for line in lines[1:end]) == 1,
+            "Ambiguous capability marker in frontmatter")
+    target = start + 1 + marker_lines[0]
+    payload = content[-1][2 + len(META_MARKER):]
+    index = json.loads(payload, object_pairs_hook=meta_pairs_unique)
+    meta_encode_index(index)
+    offset = sum(len(line) for line in lines[:target]) + 2 + len(META_MARKER)
+    return index, offset, offset + len(payload)
+
+
+def meta_load_sync_input(path_text):
+    """Read and validate a local, non-secret sync manifest.
+
+    Accepted shapes:
+      {"notion": "搜索和读取 Notion 页面", "logseq": "检索 Logseq 知识库"}
+      [{"name": "notion", "summary": "搜索和读取 Notion 页面"}]
+    """
+    path = Path(path_text).expanduser()
+    info = path.lstat()
+    meta_require(stat.S_ISREG(info.st_mode) and not path.is_symlink(),
+            "Sync input must be a regular, non-symlink file")
+    meta_require(info.st_size <= META_MAX_INPUT_BYTES,
+            f"Sync input exceeds {META_MAX_INPUT_BYTES} bytes")
+    raw = path.read_bytes()
+    meta_require(len(raw) <= META_MAX_INPUT_BYTES, f"Sync input exceeds {META_MAX_INPUT_BYTES} bytes")
+    data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=meta_pairs_unique)
+    if isinstance(data, dict):
+        items = dict(data)
+    elif isinstance(data, list):
+        items = {}
+        for index, item in enumerate(data):
+            meta_require(isinstance(item, dict), f"Sync input item {index} must be an object")
+            extra = sorted(set(item) - {"name", "summary"})
+            meta_require(not extra, f"Sync input item {index} has unexpected fields: {', '.join(extra)}")
+            name = item.get("name")
+            summary = item.get("summary")
+            meta_require(isinstance(name, str), f"Sync input item {index} name must be a string")
+            meta_require(isinstance(summary, str), f"Sync input item {index} summary must be a string")
+            meta_require(name not in items, f"Duplicate sync input name: {name}")
+            items[name] = summary
+    else:
+        raise MetaError("Sync input must be a JSON object or array")
+    meta_require(len(items) <= META_MAX_ITEMS, f"At most {META_MAX_ITEMS} capability entries are allowed")
+    for name, summary in items.items():
+        meta_validate_name(name)
+        meta_validate_summary(summary)
+    return items
+
+
+@contextmanager
+def meta_writer_lock(timeout):
+    lock = META_ROOT / ".pmcp-meta.lock"
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            meta_require(time.monotonic() < deadline,
+                    "Metadata writer lock is busy; after a crash, verify no writer is running before removing .pmcp-meta.lock")
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    try:
+        yield
+    finally:
+        # Only remove the empty lock directory created by this writer.
+        lock.rmdir()
+
+
+def meta_file_identity(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_mode)
+
+
+def meta_replace_skill(before, info, after):
+    fd, name = tempfile.mkstemp(prefix=".pmcp-meta-", suffix=".tmp", dir=META_ROOT)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(after)
+            out.flush()
+            os.fsync(out.fileno())
+        os.chmod(temporary, stat.S_IMODE(info.st_mode))
+        current, _, current_info = meta_read_skill()
+        meta_require(current == before and meta_file_identity(current_info) == meta_file_identity(info),
+                "SKILL.md changed outside pmcp.py metadata commands; no replacement performed")
+        os.replace(temporary, META_SKILL)
+        # Atomic replacement for readers, not a guarantee against power loss or
+        # uncooperative writers. POSIX mode retained; custom ACLs are not copied.
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def meta_add_commands(commands):
+    for command in ("meta-add", "meta-rm", "meta-list"):
+        sub = commands.add_parser(command)
+        sub.add_argument("--dry-run", action="store_true", help="Show the resulting index; never write or lock")
+        sub.add_argument("--lock-timeout", type=float, default=5.0,
+                         help="Maximum wait for another writer, 0..60 seconds (default 5)")
+        if command != "meta-list":
+            sub.add_argument("name")
+        if command == "meta-add":
+            sub.add_argument("description", help="Approved, nonsecret service-level capability summary")
+    sync = commands.add_parser("meta-sync")
+    sync.add_argument("--input", required=True,
+                      help="Local JSON manifest: {name: summary} or [{name, summary}]")
+    sync.add_argument("--replace", action="store_true",
+                      help="Replace the whole index instead of merging; removes entries absent from input")
+    sync.add_argument("--dry-run", action="store_true", help="Show the resulting index; never write or lock")
+    sync.add_argument("--lock-timeout", type=float, default=5.0,
+                      help="Maximum wait for another writer, 0..60 seconds (default 5)")
+
+
+def meta_run(args):
+    meta_require(math.isfinite(args.lock_timeout) and 0 <= args.lock_timeout <= 60,
+            "Lock timeout must be a finite number between 0 and 60")
+    if args.command in ("meta-add", "meta-rm"):
+        meta_validate_name(args.name)
+    if args.command == "meta-add":
+        meta_validate_summary(args.description)
+    incoming = meta_load_sync_input(args.input) if args.command == "meta-sync" else None
+
+    def operation():
+        raw, text, info = meta_read_skill()
+        index, start, stop = meta_parse_index(text)
+        updated = dict(index)
+        diff = None
+        if args.command == "meta-add":
+            updated[args.name] = args.description
+        elif args.command == "meta-rm":
+            updated.pop(args.name, None)  # Idempotent; no MCP is disconnected.
+        elif args.command == "meta-sync":
+            if args.replace:
+                updated = dict(incoming)
+            else:
+                updated.update(incoming)
+            diff = {
+                "added": sorted(set(updated) - set(index)),
+                "updated": sorted(k for k in incoming if k in index and index[k] != incoming[k]),
+                "removed": sorted(set(index) - set(updated)),
+                "unchanged": sorted(k for k in incoming if index.get(k) == incoming[k]),
+            }
+        changed = updated != index
+        payload = meta_encode_index(updated)
+        if changed:
+            after = (text[:start] + payload + text[stop:]).encode("utf-8")
+            # Dry runs validate the same candidate; only mutation is skipped.
+            meta_require(len(after) <= META_MAX_FILE_BYTES, "Resulting SKILL.md would exceed the file size limit")
+            meta_require(meta_parse_index(after.decode("utf-8"))[0] == updated, "Candidate validation failed")
+            if not args.dry_run:
+                meta_replace_skill(raw, info, after)
+        print(json.dumps({"capabilities": updated, "changed": changed, "diff": diff,
+                          "written": changed and not args.dry_run, "dryRun": args.dry_run},
+                         ensure_ascii=True, sort_keys=True))
+
+    if args.command == "meta-list" or args.dry_run:
+        operation()
+    else:
+        with meta_writer_lock(args.lock_timeout):
+            operation()
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -315,11 +592,23 @@ def parser():
     auth.add_argument("--reset", action="store_true")
     logout = sub.add_parser("logout")
     logout.add_argument("server")
+    meta_add_commands(sub)
     return p
 
 
 def main():
     args = parser().parse_args()
+    # Metadata operations are skill-local: no account state, runtime, Node or MCP.
+    if args.command in ("meta-add", "meta-rm", "meta-list", "meta-sync"):
+        try:
+            return meta_run(args)
+        except (MetaError, OSError, UnicodeError, ValueError, RecursionError) as error:
+            if isinstance(error, (MetaError, FileNotFoundError, PermissionError)):
+                message = str(error)
+            else:
+                message = "Invalid UTF-8/JSON or filesystem operation failed; no automatic format repair"
+            print("PMCP_META_FAILED: " + message, file=sys.stderr)
+            return 1
     state = prepare_state()
     config = state / "config" / "mcporter.json"
     with profile_lock(state, LOCK_TIMEOUT_SECONDS), (nullcontext() if args.command == "init" else install_lock(LOCK_TIMEOUT_SECONDS)):

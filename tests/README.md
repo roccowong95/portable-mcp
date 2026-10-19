@@ -32,8 +32,12 @@ boundary against fake public backend exports for the 0.9 and 0.15 API branches:
 init, version, servers, doctor, tools, schema, successful/error raw calls, exact-name
 rejection and JSON type/Unicode preservation. OS-account home and runtime paths
 are patched only in its temporary test driver, never through a production switch.
-It also exercises the capability-index add/sync/remove lifecycle on a copied skill.
-These tests do not prove that either real backend version or its transport works.
+The capability-index cases call `pmcp.py meta-*` on a copied skill without Node,
+runtime, init or account-state access. They cover validation, dry-run/merge/replace,
+idempotency, writer locks and unchanged surrounding metadata. Installer cases use
+mocked registry/npm boundaries to assert the fixed npmmirror URL without downloading
+or installing packages. These tests do not prove real package installation or that
+either real backend version or its transport works.
 
 All fixtures are created in OS temporary directories and removed by the tests.
 No test entry point creates the production runtime or authenticates an account.

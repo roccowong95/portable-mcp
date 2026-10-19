@@ -116,3 +116,21 @@ cd /root/.openclaw/workspace-task/skills/portable-mcp && ls scripts/ && python3 
 本次没有下载、安装或更新第三方运行时，没有使用真实账号配置/vault、没有 OAuth 或业务调用。已部署 skill 的 runtime 目录在本次检查时不存在，故**未重跑真实 mcporter smoke**；上文真实 0.9.0 smoke 仅为此前基线的历史结果，不算当前入口验收。没有为弥补此缺口而安装依赖或改动部署内容。
 
 该轮验证不等于真实 mcporter 0.15、HTTP/SSE、OAuth 回调/持久化/刷新、并发刷新、Windows 生产环境或 Amoo 端到端通过。提交与 push 后仍须用户在 Studio 发布/安装并确认，再开始 Amoo 新会话验收。中性命名用于明确产品与后端边界，不作为绕过宿主授权网关的方案。
+
+## 淘宝镜像与统一能力索引入口回归（2026-10-19 23:30，Asia/Shanghai）
+
+基线 `1cd464b6afdbdc74bb86251aae021c8154d31008` 加本次修改：安装器固定 `https://registry.npmmirror.com/`；删除三个 mcpc 退役提示脚本；将原独立能力索引实现并入 `pmcp.py meta-*` 并删除独立入口。保留 Node bridge 与 npm semver helper，不改变 MCP 业务合同及私有配置路径。
+
+先只读核对双跳 SSH 的 uid、PATH、两个现有 Node 版本及部署安装记录是否存在：SSH 默认 `/usr/bin/node v24.21.0`，另有 `/usr/local/node/bin/node v22.23.3`；部署安装记录不存在。没有读取配置、vault、进程环境或参数。随后将当前 `src/` 及三份回归测试同步至新建隔离目录 `/root/workspace/portable-mcp-verify-unified-4cq5i__2`，在各测试子进程单独选择既有 Node，不修改全局 PATH。
+
+| 环境 | Python unittest | Node bridge tests |
+| --- | --- | --- |
+| Linux，既有 Node `v22.23.3` | **34 passed，0 skipped**，9.945 秒 | **35 passed，0 skipped** |
+| Linux，既有 Node `v24.21.0` | **34 passed，0 skipped**，9.978 秒 | **35 passed，0 skipped** |
+| 本机 Windows | **17 passed，17 skipped**（共 34 项），5.627 秒 | 本轮未重跑 |
+
+新增证据：能力索引真实 CLI 使用只含 Python 入口及其标准库安装模块的 skill 副本、清空 Node PATH，覆盖 add/list/remove/sync、merge/replace/dry-run/幂等、索引锁、输入限制、重复 JSON/YAML、CRLF/mode 及非目标字节保留；独立 guard 断言 meta 分派不调用任何账号状态、运行时、Node 或执行函数。安装器使用 mock registry/npm 边界，检查淘宝请求、精确安装参数、净化环境和安装记录；**未进行真实 npm install**。业务进程合同和 bridge 仍使用 fake 后端 API，不代表真实 mcporter 联网验收。
+
+此外，本机只读 GET 淘宝镜像 `/mcporter/latest` 成功，返回包名 `mcporter`、版本 `0.15.0`、Node engine `>=24`。这只证明该次元数据端点可达，不能代替完整依赖下载/安装或未来可用性。
+
+本轮未安装/更新任何第三方运行时、未升级 Node、未覆盖部署内容、未读写真实账号配置或凭据、未执行 OAuth/真实业务/Amoo 新会话。现有安装默认离线复用；镜像策略变更不会自动重装。最终宿主验收仍遵守用户发布/安装确认后的顺序。

@@ -1,6 +1,6 @@
 {
   "name": "portable-mcp",
-  "description": "通过固定 skill 和 pmcp.py 入口，为具备本地命令执行能力的 Agent 提供 MCP 服务配置、动态工具发现、schema 读取及 JSON stdin 精确调用；不注册宿主原生工具。需要 Python 3.9+、现有 PATH 中的 Node/npm，内部依赖 mcporter。第三方运行时安装和 OAuth 授权须显式许可；固定私有状态，不升级系统 Node，不自动安装、登录或重试业务调用。",
+  "description": "通过固定 skill 和 pmcp.py 入口，为具备本地命令执行能力的 Agent 提供 MCP 服务配置、动态工具发现、schema 读取及 JSON stdin 精确调用；不注册宿主原生工具。需要 Python 3.9+；MCP 业务还需要现有 PATH 中的 Node/npm，内部依赖 mcporter。运行时安装固定使用淘宝第三方镜像 https://registry.npmmirror.com/，失败不静默回退官方源；已有兼容安装离线复用。pmcp.py meta-* 无需 runtime、Node 或 init，只维护 skill description 能力索引，不访问账号状态或 MCP。第三方运行时安装和 OAuth 授权须显式许可；固定私有状态，不升级系统 Node，不自动安装、登录或重试业务调用。",
   "includes": {
     "plugins": [],
     "connectors": []

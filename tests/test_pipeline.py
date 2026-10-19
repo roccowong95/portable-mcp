@@ -157,32 +157,200 @@ class ProcessPipelineTests(unittest.TestCase):
 
 
 class CapabilityIndexTests(unittest.TestCase):
-    def test_index_lifecycle_only_changes_description(self):
-        with tempfile.TemporaryDirectory(prefix='pmcp-index-test-') as temporary:
-            root = Path(temporary)
-            (root / 'scripts').mkdir()
-            shutil.copyfile(SCRIPTS / 'pmcp-ctl', root / 'scripts/pmcp-ctl')
-            skill = root / 'SKILL.md'
-            skill.write_bytes((SCRIPTS.parent / 'SKILL.md').read_bytes())
-            before = skill.read_text(encoding='utf-8')
+    """Real unified CLI, copied skill and import-only installer; no Node on PATH."""
 
-            def run(*args):
-                result = subprocess.run([sys.executable, str(root / 'scripts/pmcp-ctl'), *args],
-                                        capture_output=True, text=True, encoding='utf-8', timeout=10)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                return json.loads(result.stdout)
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='pmcp-index-test-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.scripts = self.root / 'scripts'
+        self.scripts.mkdir()
+        for name in ('pmcp.py', 'install_runtime.py'):
+            shutil.copyfile(SCRIPTS / name, self.scripts / name)
+        self.skill = self.root / 'SKILL.md'
+        self.before = (SCRIPTS.parent / 'SKILL.md').read_bytes()
+        self.skill.write_bytes(self.before)
+        self.manifest = self.root / 'capabilities.json'
+        self.env = os.environ.copy()
+        self.env.update({'PATH': '', 'PYTHONDONTWRITEBYTECODE': '1',
+                         'HOME': str(self.root / 'unused-home'),
+                         'USERPROFILE': str(self.root / 'unused-home')})
 
-            self.assertEqual(run('meta-list')['capabilities'], {})
-            self.assertFalse(run('meta-add', 'demo', '发现测试工具', '--dry-run')['written'])
-            self.assertEqual(skill.read_text(encoding='utf-8'), before)
-            self.assertTrue(run('meta-add', 'demo', '发现测试工具')['written'])
-            manifest = root / 'capabilities.json'
-            manifest.write_text(json.dumps({'second':'读取测试状态'}), encoding='utf-8')
-            self.assertEqual(set(run('meta-sync', '--input', str(manifest))['capabilities']), {'demo','second'})
-            run('meta-rm', 'demo')
-            run('meta-rm', 'second')
-            self.assertEqual(skill.read_text(encoding='utf-8'), before)
-            self.assertEqual(sorted(p.name for p in root.iterdir()), ['SKILL.md','capabilities.json','scripts'])
+    def run_meta(self, *args, success=True):
+        result = subprocess.run([sys.executable, str(self.scripts / 'pmcp.py'), *args],
+                                cwd=self.root, env=self.env, capture_output=True,
+                                text=True, encoding='utf-8', timeout=10)
+        self.assertFalse((self.scripts / '.runtime').exists())
+        self.assertFalse((self.root / '.portable-mcp').exists())
+        self.assertFalse((self.root / 'unused-home').exists())
+        self.assertEqual(sorted(p.name for p in self.scripts.iterdir()),
+                         ['install_runtime.py', 'pmcp.py'])
+        if success:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, '')
+            return json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('PMCP_META_FAILED:', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        return result
+
+    def write_manifest(self, value):
+        self.manifest.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
+        return str(self.manifest)
+
+    def snapshot(self):
+        info = self.skill.stat()
+        return self.skill.read_bytes(), info.st_ino, info.st_mtime_ns, info.st_mode
+
+    def assert_only_index_changed(self, before):
+        def mask(raw):
+            lines = raw.splitlines(keepends=True)
+            return b''.join(b'  PMCP_CAPABILITIES=<INDEX>\n'
+                            if line.startswith(b'  PMCP_CAPABILITIES=') else line
+                            for line in lines)
+        self.assertEqual(mask(self.skill.read_bytes()), mask(before))
+
+    def test_index_lifecycle_only_changes_description_without_node(self):
+        self.assertIsNone(shutil.which('node', path=self.env['PATH']))
+        self.assertEqual(self.run_meta('meta-list')['capabilities'], {})
+        self.assertFalse(self.run_meta('meta-add', 'demo', '发现测试工具', '--dry-run')['written'])
+        self.assertEqual(self.skill.read_bytes(), self.before)
+        self.assertTrue(self.run_meta('meta-add', 'demo', '发现测试工具')['written'])
+        self.assert_only_index_changed(self.before)
+        manifest = self.write_manifest({'second': '读取测试状态'})
+        self.assertEqual(set(self.run_meta('meta-sync', '--input', manifest)['capabilities']),
+                         {'demo', 'second'})
+        self.run_meta('meta-rm', 'demo')
+        self.run_meta('meta-rm', 'second')
+        self.assertEqual(self.skill.read_bytes(), self.before)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()),
+                         ['SKILL.md', 'capabilities.json', 'scripts'])
+
+    def test_sync_merge_replace_dry_run_and_idempotence(self):
+        self.run_meta('meta-add', 'old', '旧服务')
+        self.run_meta('meta-add', 'same', '不变服务')
+        manifest = self.write_manifest([{'name': 'same', 'summary': '不变服务'},
+                                        {'name': 'new', 'summary': '新服务'}])
+        before = self.snapshot()
+        preview = self.run_meta('meta-sync', '--input', manifest, '--replace', '--dry-run')
+        self.assertEqual(preview['capabilities'], {'same': '不变服务', 'new': '新服务'})
+        self.assertEqual(preview['diff'], {'added': ['new'], 'updated': [],
+                                         'removed': ['old'], 'unchanged': ['same']})
+        self.assertTrue(preview['changed'])
+        self.assertFalse(preview['written'])
+        self.assertTrue(preview['dryRun'])
+        self.assertEqual(self.snapshot(), before)
+        merged = self.run_meta('meta-sync', '--input', manifest)
+        self.assertEqual(set(merged['capabilities']), {'old', 'same', 'new'})
+        self.assertEqual(merged['diff']['removed'], [])
+        replaced = self.run_meta('meta-sync', '--input', manifest, '--replace')
+        self.assertEqual(replaced['diff']['removed'], ['old'])
+        self.assertTrue(replaced['written'])
+        before = self.snapshot()
+        again = self.run_meta('meta-sync', '--input', manifest, '--replace')
+        self.assertFalse(again['written'])
+        self.assertFalse(again['changed'])
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(self.run_meta('meta-add', 'same', '不变服务')['changed'])
+        self.assertFalse(self.run_meta('meta-rm', 'absent')['changed'])
+        self.assertEqual(self.snapshot(), before)
+        self.write_manifest({'same': '更新服务'})
+        updated = self.run_meta('meta-sync', '--input', manifest)
+        self.assertEqual(updated['diff']['updated'], ['same'])
+        self.assertEqual(updated['capabilities']['new'], '新服务')
+        self.assert_only_index_changed(self.before)
+
+    def test_malicious_summaries_rejected_without_rewriting(self):
+        for value in ('', ' leading', 'trailing ', 'x' * 161, 'a\nname: injected',
+                      'a\rb', 'a\tb', 'a\u202eb', 'a\u200bb', 'a\u2028b', 'a\u2029b',
+                      'PMCP_CAPABILITIES={"other":"injected"}'):
+            with self.subTest(value=repr(value)):
+                self.run_meta('meta-add', 'demo', value, success=False)
+                self.assertEqual(self.skill.read_bytes(), self.before)
+        # Quotes/YAML-looking text are data inside JSON, not executable metadata.
+        summary = '读取 "quoted": {value} --- [service]'
+        self.assertEqual(self.run_meta('meta-add', 'demo', summary)['capabilities'],
+                         {'demo': summary})
+        self.assert_only_index_changed(self.before)
+
+    def test_invalid_names_limits_and_nonfinite_lock_timeout(self):
+        for name in ('../demo', '.demo', '服务', 'x' * 65):
+            with self.subTest(name=name):
+                self.run_meta('meta-add', name, 'summary', success=False)
+        for value in ('nan', 'inf', '-1', '61'):
+            with self.subTest(timeout=value):
+                self.run_meta('meta-list', '--lock-timeout=' + value, success=False)
+        for manifest in ({f's{i}': 'summary' for i in range(25)},
+                         {f's{i}': '测' * 160 for i in range(10)}):
+            with self.subTest(entries=len(manifest)):
+                self.run_meta('meta-sync', '--input', self.write_manifest(manifest), success=False)
+        self.assertEqual(self.skill.read_bytes(), self.before)
+
+    def test_duplicate_json_and_invalid_manifests_are_rejected(self):
+        inputs = ('{"demo":"first","demo":"second"}',
+                  '[{"name":"demo","summary":"first"},{"name":"demo","summary":"second"}]',
+                  '[{"name":"demo","summary":"first","summary":"second"}]',
+                  '[{"name":"demo","summary":"first","secret":"do-not-echo"}]',
+                  '[{"name":"demo","summary":null}]', '[] trailing-do-not-echo', 'null')
+        for text in inputs:
+            with self.subTest(text=text):
+                self.manifest.write_text(text, encoding='utf-8')
+                result = self.run_meta('meta-sync', '--input', str(self.manifest), success=False)
+                self.assertNotIn('do-not-echo', result.stderr)
+                self.assertEqual(self.skill.read_bytes(), self.before)
+        self.manifest.write_bytes(b'\xffdo-not-echo')
+        result = self.run_meta('meta-sync', '--input', str(self.manifest), success=False)
+        self.assertNotIn('do-not-echo', result.stderr)
+
+    def test_ambiguous_frontmatter_or_index_is_preserved(self):
+        text = self.before.decode('utf-8')
+        variants = (text.replace('PMCP_CAPABILITIES={}',
+                                 'PMCP_CAPABILITIES={"demo":"one","demo":"two"}', 1),
+                    text.replace('description: >-', 'description: ignored\ndescription: >-', 1),
+                    text.replace('description: >-', '"description": ignored\ndescription: >-', 1),
+                    text.replace('PMCP_CAPABILITIES={}',
+                                 'PMCP_CAPABILITIES={}\n  PMCP_CAPABILITIES={}', 1),
+                    text.replace('description: >-', 'description: |', 1))
+        for malformed in variants:
+            with self.subTest(frontmatter=malformed[:100]):
+                self.assertNotEqual(malformed, text)
+                self.skill.write_text(malformed, encoding='utf-8')
+                before = self.snapshot()
+                self.run_meta('meta-add', 'demo', 'summary', success=False)
+                self.assertEqual(self.snapshot(), before)
+                self.assertFalse((self.root / '.pmcp-meta.lock').exists())
+
+    def test_writer_lock_busy_but_list_and_dry_run_do_not_lock(self):
+        lock = self.root / '.pmcp-meta.lock'
+        lock.mkdir()
+        before = self.snapshot()
+        result = self.run_meta('meta-add', 'demo', 'summary', '--lock-timeout', '0', success=False)
+        self.assertIn('lock is busy', result.stderr)
+        self.assertTrue(lock.is_dir())
+        self.assertEqual(self.run_meta('meta-list')['capabilities'], {})
+        preview = self.run_meta('meta-add', 'demo', 'summary', '--dry-run', '--lock-timeout', '0')
+        self.assertTrue(preview['changed'])
+        self.assertFalse(preview['written'])
+        manifest = self.write_manifest({'demo': 'summary'})
+        self.assertFalse(self.run_meta('meta-sync', '--input', manifest, '--replace', '--dry-run')['written'])
+        self.assertEqual(self.snapshot(), before)
+        lock.rmdir()  # Known empty lock in this test's temporary root only.
+        self.assertTrue(self.run_meta('meta-add', 'demo', 'summary')['written'])
+        self.assertFalse(lock.exists())
+
+    def test_crlf_mode_and_other_metadata_are_preserved(self):
+        crlf = self.before.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+        self.skill.write_bytes(crlf)
+        if os.name == 'posix':
+            self.skill.chmod(0o640)
+        mode = self.skill.stat().st_mode
+        self.run_meta('meta-add', 'demo', 'summary')
+        self.assert_only_index_changed(crlf)
+        self.assertNotIn(b'\n', self.skill.read_bytes().replace(b'\r\n', b''))
+        self.assertEqual(self.skill.stat().st_mode, mode)
+        self.run_meta('meta-rm', 'demo')
+        self.assertEqual(self.skill.read_bytes(), crlf)
 
 
 if __name__ == '__main__':

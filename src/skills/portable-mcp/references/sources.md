@@ -2,7 +2,7 @@
 
 portable-mcp 是插件与 `python3 <skill-root>/scripts/pmcp.py` 稳定入口的名称，内部依赖的 npm 包仍是 **`mcporter`**。本页保留真实包名、版本和官方链接，便于核对实际安装与安全约束。安装器是 `python3 <skill-root>/scripts/install_runtime.py`，内部适配实现为 `mcp_bridge.mjs` / `runtime_versions.cjs`。
 
-本 skill 固定使用现有 PATH Node/npm 与官方 `https://registry.npmjs.org`，不提供版本、registry、工具链或路径选择/环境覆盖。显式安装自动选择稳定、未弃用、`>=0.9.0` 且根包 engines 适配**既有 Node** 的最高版本，再以 npm engine-strict 校验依赖并锁定；不升级 Node，不保证任意 latest 可用。0.9 只是兼容性示例，不是要求安装的目标；根包匹配不是依赖可安装或业务验收证明。
+本 skill 固定使用现有 PATH Node/npm 与淘宝镜像 `https://registry.npmmirror.com/`；这是**第三方镜像，不是 npm 官方源**，失败不静默 fallback 到官方源。不提供版本、registry、工具链或路径选择/环境覆盖。显式安装自动选择稳定、未弃用、`>=0.9.0` 且根包 engines 适配**既有 Node** 的最高版本，再以 npm engine-strict 校验依赖并锁定；不升级 Node，不保证任意 latest 可用。已有兼容安装默认离线校验并复用，不强制更新。0.9 只是兼容性示例，不是要求安装的目标；根包匹配不是依赖可安装或业务验收证明。下方官方资料链接用于核对真实依赖，并非安装源或失败回退源。
 
 ## 已核实的版本来源
 

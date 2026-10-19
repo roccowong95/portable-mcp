@@ -30,7 +30,7 @@ PACKAGE_REL = Path("node_modules/mcporter")
 CLI_REL = "node_modules/mcporter/dist/cli.js"
 HELPER = SCRIPTS / "runtime_versions.cjs"
 MARKER_NAME = "skill-install.json"
-REGISTRY = "https://registry.npmjs.org/"
+REGISTRY = "https://registry.npmmirror.com/"
 MAX_METADATA_BYTES = 64 * 1024 * 1024
 
 
@@ -207,7 +207,7 @@ def fetch_versions():
         with urllib.request.build_opener(HTTPSRedirectHandler()).open(request, timeout=60) as response:
             body = response.read(MAX_METADATA_BYTES + 1)
     except (urllib.error.URLError, OSError):
-        raise RuntimeError("Cannot fetch HTTPS runtime metadata from the official npm registry; check connectivity") from None
+        raise RuntimeError("Cannot fetch HTTPS runtime metadata from the fixed npmmirror registry; check connectivity (no registry fallback)") from None
     if len(body) > MAX_METADATA_BYTES:
         raise RuntimeError("Registry metadata exceeds the 64 MiB safety limit")
     metadata = json.loads(body)

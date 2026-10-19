@@ -7,8 +7,8 @@
 | 找不到运行时/安装记录不匹配 | 取得下载许可后显式运行安装器，不改记录、不用全局 CLI 或浮动 npx |
 | Node/npm 缺失或发生变化 | 检查现有 PATH 前提，停止并报告；不能通过 skill 参数选另一套工具链或升级系统 Node。已有安装需要更新时须明确许可 |
 | 没有兼容候选/依赖 EBADENGINE | 根包匹配不证明依赖满足；不 force、不忽略 engines、不升级 Node、不指定旧版本绕过 |
-| 官方 registry 不可达 | 固定官方 HTTPS 源，不读 npm 配置切镜像，不暴露 registry 或环境覆盖；报告网络限制，不绕过 TLS |
-| --check 未显示新候选 | 已有安装默认离线复用；明确 --update --check 才重新选择。不会安装/写运行时，但可能读官方元数据 |
+| 淘宝镜像不可达 | 固定 `https://registry.npmmirror.com/`，这是第三方镜像，不是 npm 官方源。报告原始错误，不静默 fallback 官方源，不读 npm 配置切源，不暴露 registry 或环境覆盖，不绕过 TLS |
+| --check 未显示新候选 | 已有安装默认离线复用；明确 --update --check 才重新选择。不会安装/写运行时，但可能读淘宝镜像元数据 |
 | 有 stage/backup 遗留 | 不删未知目录；核对确切绝对路径、无人使用及用户许可后处理，保留可回退副本 |
 | 配置被拒绝 | 严格 JSON，根 key 仅 mcpServers/imports，imports 为 []；每个服务显式 ephemeral，无 refresh/tokenCacheDir |
 | Profile is busy | 固定账号 profile 正在使用，锁内部最多等 30 秒；不换目录/账号、复制凭据或改环境绕过 |
@@ -25,7 +25,7 @@
 | MCP isError=true / 退出 2 | 有 MCP 结果时核对部分效果；用法错误也可能退出 2，结合 stdout/stderr 区分 |
 | Windows 权限失败 | 管理员本机预设受保护 ACL，入口只检查，不擅自改 ACL/提权，不宣称完整平台验收 |
 
-固定入口不提供状态路径、Node/npm、registry、版本、超时或浏览器模式选择，也不接受部署环境覆盖。配置位置为真实 OS home 下 `.portable-mcp/config/mcporter.json`；内部目录属于实现细节，不让用户挑选。不通过直接 native CLI 或复制 token 绕过。
+业务/安装入口不提供状态路径、Node/npm、registry、版本、超时或浏览器模式选择，也不接受部署环境覆盖。`pmcp.py meta-*` 无需 runtime、Node 或 init，不访问账号状态或 MCP，只维护本 skill description；它的本地索引写入锁与错误合同见[能力索引](capability-index.md)。配置位置为真实 OS home 下 `.portable-mcp/config/mcporter.json`；内部目录属于实现细节，不让用户挑选。不通过直接 native CLI 或复制 token 绕过。
 
 失败可能报告 `PMCP_ENTRY_FAILED` 或结构化 bridge 代码；读取脱敏诊断，不把 token、callback URL、完整配置/日志贴进对话。
 

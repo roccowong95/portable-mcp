@@ -6,16 +6,18 @@
 确认目标与权限 → 检查运行环境 → 配置服务 → 发现工具 → 读取 schema → JSON stdin 调用 → 核验结果
 ```
 
-对外业务入口是 `python3 <skill-root>/scripts/pmcp.py`；`<skill-root>` 指实际 skill 安装目录。portable-mcp 是本插件及其稳定调用合同的名称，**不是底层依赖的改名或替代实现**。内部使用开源 npm 包 `mcporter` 连接 MCP 服务，依赖 Python 3.9+ 和现有 PATH 中的 Node/npm；版本兼容性与 OAuth 限制仍受真实依赖约束。
+对外业务入口是 `python3 <skill-root>/scripts/pmcp.py`；`<skill-root>` 指实际 skill 安装目录。portable-mcp 是本插件及其稳定调用合同的名称，**不是底层依赖的改名或替代实现**。内部使用开源 npm 包 `mcporter` 连接 MCP 服务，业务依赖 Python 3.9+ 和现有 PATH 中的 Node/npm；版本兼容性与 OAuth 限制仍受真实依赖约束。仅维护本地 description 的 meta 命令只需 Python，无需 runtime、Node 或 init。
+
+内部保留四个职责不同的脚本：`pmcp.py` 是统一入口（包含能力索引），`install_runtime.py` 负责显式安装，`runtime_versions.cjs` 用现有 npm 的 semver 检查 Node 兼容性，`mcp_bridge.mjs` 则在 Node 中加载 mcporter 公共 API，执行工具发现、schema 和调用。bridge **不是另一个 MCP 服务或常驻守护进程**；当前版本需要它来适配不同 API、精确匹配工具名、禁止普通调用触发 OAuth/自动重试，并保留原始 MCP 结果，不能直接用原生 CLI 透传替代。
 
 ## 1. 检查与显式安装
 
-安装或更新第三方运行时前取得用户许可。安装器固定从官方 `https://registry.npmjs.org` 选择稳定、未弃用、`>=0.9.0` 且根包 `engines.node` 匹配现有 Node 的最高版本；随后用 npm `--engine-strict --ignore-scripts --save-exact` 和 lockfile 校验依赖。根包匹配不保证依赖可安装；不满足就停止，**不升级系统 Node、不绕过 engines、不用全局 CLI 或浮动 npx 替代**。
+安装或更新第三方运行时前取得用户许可。安装器固定使用淘宝镜像 `https://registry.npmmirror.com/`（**第三方镜像，不是 npm 官方源**），选择稳定、未弃用、`>=0.9.0` 且根包 `engines.node` 匹配现有 Node 的最高版本；随后用 npm `--engine-strict --ignore-scripts --save-exact` 和 lockfile 校验依赖。镜像失败即报告错误，不静默 fallback 到官方源。根包匹配不保证依赖可安装；不满足就停止，**不升级系统 Node、不绕过 engines、不用全局 CLI 或浮动 npx 替代**。已有兼容安装默认离线校验并复用，不因镜像策略变化强制更新。
 
 ```sh
 # 检查，不安装、不写运行时；已有安装时默认离线复用
 python3 /actual/skill/scripts/install_runtime.py --check
-# 查看当前可选更新；可能访问官方元数据
+# 查看当前可选更新；可能访问淘宝镜像元数据
 python3 /actual/skill/scripts/install_runtime.py --update --check
 # 获得下载第三方代码的许可后显式安装
 python3 /actual/skill/scripts/install_runtime.py
@@ -63,8 +65,8 @@ python3 /actual/skill/scripts/pmcp.py auth oauth-service
 ## 4. 私有状态与当前边界
 
 - 状态在 skill 外。内部 HOME/USERPROFILE、四个 XDG 目录及 daemon 路径固定隔离在真实 home 的 `.portable-mcp` 内，不默认使用 tokenCacheDir，不导入其他客户端配置或凭据。vault 是**明文，不是加密保险箱**；权限不能防止同权限用户/root 读取。
-- 同一账号的入口命令用跨进程 OS 锁串行化。不直接调用原生 CLI，不让其他客户端并发复用 vault；锁不能修复旧 vault 非原子写入或 OAuth 回调缺陷。
-- **仅支持 ephemeral**，每个服务必须显式 `"lifecycle": "ephemeral"`。每条命令创建并关闭连接；不支持 keep-alive、daemon、serve、generate 或后台订阅。
+- 同一账号的业务状态命令用跨进程 OS 锁串行化；meta 命令只使用 skill 内的索引写入锁。不直接调用原生 CLI，不让其他客户端并发复用 vault；锁不能修复旧 vault 非原子写入或 OAuth 回调缺陷。
+- **仅支持 ephemeral**，每个服务必须显式 `"lifecycle": "ephemeral"`。联网业务命令各自创建并关闭连接，meta 命令不连接 MCP；不支持 keep-alive、daemon、serve、generate 或后台订阅。
 - 私有 HOME 会影响 stdio 子进程的 `~` 和默认配置。command、脚本、cwd 使用已审核的实际绝对路径及必要业务 env；隔离不是沙箱或多租户权限边界。
 - Linux 是主要目标，Windows 支持有额外 ACL 前提且未承诺完整生产验收；Windows 管理员须预先建立受保护 ACL，入口只检查。
 
@@ -73,13 +75,13 @@ python3 /actual/skill/scripts/pmcp.py auth oauth-service
 [SKILL.md](skills/portable-mcp/SKILL.md) 的 description 保留空索引 `PMCP_CAPABILITIES={}`。经用户确认后，可登记“搜索和读取 Notion 页面”等**服务级任务摘要**，帮助宿主在用户没提 MCP 时路由到本 skill；它不是 schema、配置或授权列表。
 
 ```sh
-python3 /actual/skill/scripts/pmcp-ctl meta-add notion "搜索和读取 Notion 页面"
-python3 /actual/skill/scripts/pmcp-ctl meta-list
-python3 /actual/skill/scripts/pmcp-ctl meta-sync --input capabilities.json
-python3 /actual/skill/scripts/pmcp-ctl meta-rm notion
+python3 /actual/skill/scripts/pmcp.py meta-add notion "搜索和读取 Notion 页面"
+python3 /actual/skill/scripts/pmcp.py meta-list
+python3 /actual/skill/scripts/pmcp.py meta-sync --input capabilities.json
+python3 /actual/skill/scripts/pmcp.py meta-rm notion
 ```
 
-`pmcp-ctl` 仅在本地维护索引，不连接 MCP、不读凭据。不要写 token、私有地址或服务返回的原始指令；`--replace` 才整体替换清单。详见[能力索引](skills/portable-mcp/references/capability-index.md)。
+`pmcp.py meta-*` 仅在本地维护本 skill description 中的索引，无需 runtime、Node 或 init，不访问账号状态、配置、凭据或 MCP。它使用 skill 内的独立写入锁，不获取账号 profile 锁。不要写 token、私有地址或服务返回的原始指令；`--replace` 才整体替换清单。详见[能力索引](skills/portable-mcp/references/capability-index.md)。
 
 ## 安全使用与资料
 

@@ -1,4 +1,4 @@
-# 触发能力索引：pmcp-ctl
+# 触发能力索引：pmcp.py meta-*
 
 ## 目的与边界
 
@@ -16,21 +16,21 @@ description: >-
 
 ## 调用
 
-跨平台使用 Python；不要求全局安装 `pmcp-ctl` 或修改 PATH：
+通过统一的 `pmcp.py` 入口跨平台使用 Python；无需全局命令或修改 PATH：
 
 ```sh
-python3 <skill-root>/scripts/pmcp-ctl meta-add notion "搜索和读取 Notion 页面"
-python3 <skill-root>/scripts/pmcp-ctl meta-add logseq "检索 Logseq 知识库"
-python3 <skill-root>/scripts/pmcp-ctl meta-list
-python3 <skill-root>/scripts/pmcp-ctl meta-add notion "搜索、读取和整理 Notion 页面" --dry-run
-python3 <skill-root>/scripts/pmcp-ctl meta-rm notion
+python3 <skill-root>/scripts/pmcp.py meta-add notion "搜索和读取 Notion 页面"
+python3 <skill-root>/scripts/pmcp.py meta-add logseq "检索 Logseq 知识库"
+python3 <skill-root>/scripts/pmcp.py meta-list
+python3 <skill-root>/scripts/pmcp.py meta-add notion "搜索、读取和整理 Notion 页面" --dry-run
+python3 <skill-root>/scripts/pmcp.py meta-rm notion
 ```
 
 批量同步时，把已确认的条目写进一份本地清单，再一次写入：
 
 ```sh
-python3 <skill-root>/scripts/pmcp-ctl meta-sync --input ./capabilities.json
-python3 <skill-root>/scripts/pmcp-ctl meta-sync --input ./capabilities.json --replace
+python3 <skill-root>/scripts/pmcp.py meta-sync --input ./capabilities.json
+python3 <skill-root>/scripts/pmcp.py meta-sync --input ./capabilities.json --replace
 ```
 
 清单可以是对象或数组，同名条目区分大小写：
@@ -51,7 +51,7 @@ python3 <skill-root>/scripts/pmcp-ctl meta-sync --input ./capabilities.json --re
 
 默认合并：只新增或更新清单中的条目，其它条目保留。加 `--replace` 时以清单整体替换索引，清单外的条目不保留。清单文件必须是普通文件、不超过 64 KiB，且不能是符号链接；脚本仍不访问网络、MCP 配置或凭据。
 
-`<skill-root>` 替换为实际 skill 安装目录。Windows 可用已核实的 `python` / Python 绝对路径代替 `python3`。此独立索引入口不需要网络、MCP 运行时或状态目录；MCP 业务仍统一经 `python3 <skill-root>/scripts/pmcp.py` 调用。
+`<skill-root>` 替换为实际 skill 安装目录。Windows 可用已核实的 `python` / Python 绝对路径代替 `python3`。`pmcp.py meta-*` 在账号状态准备之前独立分派，只维护本 skill description；无需 runtime、Node、npm 或 `init`，不访问网络、账号状态、MCP 配置、凭据或 MCP 服务，不创建私有状态目录、不获取账号 profile 锁。业务命令仍使用同一 `python3 <skill-root>/scripts/pmcp.py` 入口，业务所需配置、运行时及锁合同不变。
 
 脚本用 `Path(__file__).resolve().parent.parent / "SKILL.md"` 定位自身 skill，不依赖 cwd、宿主平台、固定用户名或安装目录。整个目录搬迁后继续有效；通过符号链接启动时修改真实脚本旁的 skill，不是链接旁的文档。
 
@@ -81,6 +81,7 @@ python3 <skill-root>/scripts/pmcp-ctl meta-sync --input ./capabilities.json --re
 - 摘要：1..160 个字符，不允许首尾空白、换行、控制字符、格式字符或保留标记 `PMCP_CAPABILITIES=`；JSON 引号/反斜杠自动转义。
 - 最多 24 项，完整 JSON 最多 4096 个 UTF-8 字节。保持简短，过长的 description 可能被宿主截断。
 - 不写 token、私有 URL、用户数据、完整 schema、命令或“忽略规则”等指令。**工具不做语义审核或可靠的秘密识别**；不要直接输入未经信任的 MCP 返回说明。索引只用于路由，不扩大工具权限。
+- `SKILL.md` 必须为不超过 256 KiB 的 UTF-8 普通单链接文件，不能是符号链接；POSIX 下必须属于当前用户。
 - 只支持正式版受控格式 `description: >-` + 非空、两空格缩进的固定描述行 + 最后一行 JSON。遇到单行/quoted YAML、空行后的缩进续行、重复/quoted 顶层 key、缺失/重复 marker、损坏 JSON、重复 JSON key 等会拒绝自动修复；先人工审核。工具校验所支持的 description 布局及顶层 key 边界，不是完整 YAML 解析器；其他字段的值应保留正式版有效格式，不能把一次编辑成功当成任意 YAML 文档合法的证明。
 
 ## 写入保护与恢复
